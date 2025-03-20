@@ -1,0 +1,17 @@
+[package]
+name = "steelwool"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+ollama = ["ollama-rs", "tokio-runtime"]
+tokio-runtime = ["tokio"]
+
+[dependencies]
+futures = "0.3.31"
+tokio = { version = "1.44.1", features = ["full"], optional = true }
+
+[dependencies.ollama-rs]
+version = "0.2.6"
+optional = true
