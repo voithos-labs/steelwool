@@ -4,7 +4,7 @@ lightweight library for interacting with LLMs
 
 ## TODO
 
-- [ ] Add the following optional features to `Cargo.toml`:
+- [x] Add the following optional features to `Cargo.toml`:
 
   ```toml
   [features]
