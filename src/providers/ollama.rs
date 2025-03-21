@@ -8,7 +8,7 @@ use crate::{
 };
 use std::sync::Arc;
 
-pub fn create_ollama_adapter(model_name: String) -> ProviderAdapter {
+pub fn ollama_adapter_factory(model_name: String) -> ProviderAdapter {
     Arc::new(
         move |context: ContextBuilder,
               system_message: String,

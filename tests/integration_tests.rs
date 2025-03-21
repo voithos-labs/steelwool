@@ -4,7 +4,7 @@ mod tests {
     use tokio;
 
     #[cfg(feature = "ollama")]
-    use steelwool::providers::ollama::create_ollama_adapter;
+    use steelwool::providers::ollama::ollama_adapter_factory;
     #[cfg(feature = "ollama")]
     use steelwool::{ContentType, ContextBuilder, Message, MessageRole};
 
@@ -12,7 +12,7 @@ mod tests {
     #[cfg(feature = "ollama")]
     async fn test_ollama_integration() {
         let model_name = "llama3.2".to_string();
-        let adapter = create_ollama_adapter(model_name);
+        let adapter = ollama_adapter_factory(model_name);
 
         let context = ContextBuilder { history: vec![] }.add_message(Message {
             role: MessageRole::User,
@@ -26,8 +26,7 @@ mod tests {
         let response = context
             .send(adapter, system_message, 1000, None)
             .await
-            .resolve_without()
-            .await;
+            .resolve_without();
 
         assert!(!response.history.is_empty());
         for message in response.history {
