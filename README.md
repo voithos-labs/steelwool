@@ -4,16 +4,10 @@ lightweight library for interacting with LLMs
 
 ## TODO
 
-- [x] Add the following optional features to `Cargo.toml`:
-
-  ```toml
-  [features]
-  ollama = ["ollama-rs"]
-
-  [dependencies.ollama-rs]
-  optional = true
-  version = "0.2.6"
-  ```
+- [x] Core impl
+- [ ] Fully generalized stream handling
+- [ ] Unified tool format
+- [ ] Node (typescript) & python port
 
 ## Testing
 
