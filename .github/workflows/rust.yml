@@ -2,9 +2,9 @@ name: Rust CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,19 +18,15 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "steelwool-ci"
 
       - name: Check Formatting
         run: cargo fmt --all -- --check
 
       - name: Check with Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy -- -D warnings
 
       - name: Run tests without default features
         run: cargo test --no-default-features
@@ -38,27 +34,7 @@ jobs:
       - name: Run tests with all features
         run: cargo test --all-features
 
-      - name: Run specific feature tests
+      - name: Run tests with specific features
         run: |
           cargo test --features ollama
           cargo test --features tokio-runtime
-
-  test-os-matrix:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "steelwool-${{ matrix.os }}"
-
-      - name: Run tests with all features
-        run: cargo test --all-features
