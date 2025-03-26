@@ -373,6 +373,38 @@ pub struct UnresolvedResponse {
 }
 
 impl UnresolvedResponse {
+    pub fn resolve_tool_calls(self, tool_resolver: ToolResolver) -> ContextBuilder {
+        let mut context_builder = self.context_builder;
+
+        // Add the current message to the context
+        context_builder = context_builder.add_message(self.prompt_response.message);
+
+        // If there are no tool calls or the stop reason isn't ToolCalls, just return
+        if self.prompt_response.stop_reason != StopReason::ToolCalls
+            || self.prompt_response.tool_calls.is_none()
+        {
+            return context_builder;
+        }
+
+        // Resolve tool calls
+        let mut tool_res = String::new();
+
+        if let Some(tool_calls) = self.prompt_response.tool_calls {
+            for tool_call in tool_calls {
+                let result = tool_resolver(tool_call);
+                tool_res.push_str(&result);
+                tool_res.push('\n'); // Add a newline after each result
+            }
+        }
+
+        // Add tool response message to the context
+        context_builder.add_message(Message {
+            role: MessageRole::Tool,
+            content_type: ContentType::Text,
+            content: tool_res,
+        })
+    }
+
     /// Recursively resolves tool calls in a model response and feeds results back to the model
     ///
     /// Takes a tool resolver function that handles executing tool calls and converting results to strings.
@@ -382,7 +414,7 @@ impl UnresolvedResponse {
     /// * `tool_resolver` - Function that processes `ToolCall` objects and returns string results
     /// * `tool_reprompt_depth` - Maximum recursion depth for tool-model interaction cycles
     /// * `max_tokens` - Token budget for all subsequent model calls (decremented with each call)
-    pub fn resolve_tool_calls(
+    pub fn resolve_tool_calls_recurse(
         self,
         tool_resolver: ToolResolver,
         tool_reprompt_depth: usize,
@@ -427,7 +459,7 @@ impl UnresolvedResponse {
                         })
                         .send(adapter.clone(), self.system_message, max_tokens, self.tools)
                         .await
-                        .resolve_tool_calls(
+                        .resolve_tool_calls_recurse(
                             tool_resolver,
                             tool_reprompt_depth - 1,
                             adapter,
