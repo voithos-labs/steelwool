@@ -5,7 +5,7 @@ lightweight library for interacting with LLMs
 ## TODO
 
 - [x] Core impl
-- [ ] Fully generalized stream handling
+- [x] Fully generalized stream handling
 - [ ] Unified tool format
 - [ ] Node (typescript) & python port
 
