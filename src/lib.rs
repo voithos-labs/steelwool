@@ -7,13 +7,13 @@
 /* -------------------------------------------------------------------------- */
 
 /* ------------------------------ Dependencies ------------------------------ */
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use serde::{Deserialize, Serialize};
 
 /* -------------------------------- Features -------------------------------- */
 
@@ -83,7 +83,7 @@ pub type ToolResolver = Arc<dyn Fn(ToolCall) -> String + Send + Sync>;
 // Message
 
 /// Atomic message type with a specific role, content, and content type.
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
     pub role: MessageRole,
     pub content: String,
@@ -93,7 +93,7 @@ pub struct Message {
 // Responses
 
 /// Prompt response content
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PromptResponse {
     pub message: Message,
     pub stop_reason: StopReason,
@@ -102,7 +102,7 @@ pub struct PromptResponse {
 }
 
 /// Prompt response delta for streaming
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PromptResponseDelta {
     pub content: String,
     pub stop_reason: Option<StopReason>,
@@ -112,7 +112,7 @@ pub struct PromptResponseDelta {
 // Tools
 
 /// Describes a tool available to a model
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Tool {
     pub name: String,
     pub description: String,
@@ -121,7 +121,7 @@ pub struct Tool {
 }
 
 /// Describes a parsed tool-call
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -134,24 +134,9 @@ pub struct ToolCall {
 //     pub content: String,
 // }
 
-#[derive(Clone)]
-pub struct Parameter {
-    pub return_type: String,
-    // ... todo
-}
-
 /* ---------------------------------- Enums --------------------------------- */
 
-#[derive(Clone)]
-pub enum ArgumentValue {
-    String(String),
-    Integer(i32),
-    Float(f64),
-    Boolean(bool),
-    Vector(Vec<ArgumentValue>),
-    Object(HashMap<String, ArgumentValue>),
-}
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Deserialize, Serialize)]
 pub enum MessageRole {
     User,
     Model,
@@ -159,11 +144,11 @@ pub enum MessageRole {
     System,
     Tool,
 }
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Deserialize, Serialize)]
 pub enum ContentType {
     Text,
 }
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Deserialize, Serialize)]
 pub enum StopReason {
     Stop,
     Length,
@@ -203,7 +188,7 @@ pub enum StopReason {
 /// - `transform_with`: Allows applying a custom transformation function to the builder.
 /// - `add_message`: Adds a message to the context's history.
 /// - `send`: Sends the context using a specified adapter and returns an `UnresolvedResponse`.
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ContextBuilder {
     pub history: Vec<Message>,
 }
@@ -240,7 +225,6 @@ impl ContextBuilder {
                 .unwrap_or_else(|e| panic!("Failed to get PromptResponse: {}", e)),
             context_builder: self,
             tools,
-            adapter,
             system_message,
         }
     }
@@ -321,20 +305,11 @@ impl ContextBuilder {
             tool_calls,
         };
 
-        let prompt_response_clone = prompt_response.clone();
-
-        // Convert to standard provider adapter for resolution (I love this)
-        let standard_adapter: ProviderAdapter = Arc::new(move |_, _, _, _| {
-            let response = prompt_response_clone.clone();
-            Box::pin(async move { Ok(response) })
-        });
-
         // Return as UnresolvedResponse for consistent API
         Ok(UnresolvedResponse {
             prompt_response,
             context_builder: self,
             tools,
-            adapter: standard_adapter,
             system_message,
         })
     }
@@ -389,10 +364,10 @@ impl ContextBuilder {
 /// - `resolve_with`: Applies a custom async transformation function to resolve the response.
 /// - `resolve_with_sync`: Applies a custom synchronous transformation function to resolve the response.
 /// - `resolve_without`: Simply adds the response message to the context without additional processing.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct UnresolvedResponse {
     pub prompt_response: PromptResponse,
     pub context_builder: ContextBuilder,
-    pub adapter: ProviderAdapter,
     pub tools: Option<Vec<Tool>>,
     pub system_message: String,
 }
@@ -411,6 +386,7 @@ impl UnresolvedResponse {
         self,
         tool_resolver: ToolResolver,
         tool_reprompt_depth: usize,
+        adapter: ProviderAdapter,
         max_tokens: u32,
     ) -> Pin<Box<dyn Future<Output = ContextBuilder> + Send>> {
         Box::pin(async move {
@@ -449,11 +425,12 @@ impl UnresolvedResponse {
                             content_type: ContentType::Text,
                             content: tool_res,
                         })
-                        .send(self.adapter, self.system_message, max_tokens, self.tools)
+                        .send(adapter.clone(), self.system_message, max_tokens, self.tools)
                         .await
                         .resolve_tool_calls(
                             tool_resolver,
                             tool_reprompt_depth - 1,
+                            adapter,
                             max_tokens - self.prompt_response.token_usage,
                         )
                         .await
