@@ -415,7 +415,7 @@ impl UnresolvedResponse {
     ) -> Pin<Box<dyn Future<Output = ContextBuilder> + Send>> {
         Box::pin(async move {
             // Base case: stop if depth is 0 or tokens are exhausted
-            if tool_reprompt_depth == 0 || max_tokens <= 0 {
+            if tool_reprompt_depth == 0 || max_tokens == 0 {
                 return self
                     .context_builder
                     .add_message(self.prompt_response.message);
