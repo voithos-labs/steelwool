@@ -20,5 +20,11 @@ lightweight library for interacting with LLMs
 To test the basic ollama integration, run in root:
 
 ```
+cargo test --features ollama
+```
+
+To see debug output add:
+
+```
 cargo test --features ollama -- --nocapture
 ```

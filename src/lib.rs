@@ -12,7 +12,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-// use futures::StreamExt;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 
 /* -------------------------------- Features -------------------------------- */
@@ -60,17 +60,13 @@ pub type ProviderAdapter =
 ///
 /// Similar to ProviderAdapter but returns a stream of response chunks instead of a single future.
 /// Enables processing partial responses as they arrive from the model.
-///
-/// **TODO:**
-///
-/// Use a `PromptResponseDelta` struct or smth to capture values instead of `PromptResponse`
 pub type StreamProviderAdapter = Arc<
     dyn Fn(
             ContextBuilder,
             String,
             u32,
             Option<Vec<Tool>>,
-        ) -> BoxStream<'static, Result<PromptResponse, String>>
+        ) -> BoxStream<'static, Result<PromptResponseDelta, String>>
         + Send
         + Sync,
 >;
@@ -97,16 +93,20 @@ pub struct Message {
 // Responses
 
 /// Prompt response content
-/// ## Fields
-/// - `message`: The main message content of the response.
-/// - `stop_reason`: The reason why the response generation was stopped.
-/// - `token_usage`: The number of tokens used in generating the response.
-/// - `tool_calls`: An optional list of tool calls made during the response generation.
+#[derive(Clone)]
 pub struct PromptResponse {
     pub message: Message,
     pub stop_reason: StopReason,
     pub token_usage: u32,
     pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+/// Prompt response delta for streaming
+#[derive(Clone)]
+pub struct PromptResponseDelta {
+    pub content: String,
+    pub stop_reason: Option<StopReason>,
+    pub tool_call: Option<ToolCall>,
 }
 
 // Tools
@@ -116,7 +116,8 @@ pub struct PromptResponse {
 pub struct Tool {
     pub name: String,
     pub description: String,
-    pub parameters: HashMap<String, Parameter>,
+    pub schema: serde_json::Value,
+    pub required: bool,
 }
 
 /// Describes a parsed tool-call
@@ -124,7 +125,7 @@ pub struct Tool {
 pub struct ToolCall {
     pub id: String,
     pub name: String,
-    pub arguments: HashMap<String, ArgumentValue>,
+    pub arguments: serde_json::Value,
 }
 
 // #[derive(Clone, Serialize, Deserialize)]
@@ -181,7 +182,7 @@ pub enum StopReason {
 /// ```rust,ignore
 /// let context_builder = ContextBuilder::new()
 ///     .add_message(message) // -> ContextBuilder
-///     .your_transformer() // your custom transformer -> ContextBuilder
+///     .your_transformer(<args>) // your custom transformer -> ContextBuilder
 ///     .self_rag(vector_interface) // -> ContextBuilder
 ///     .transform_with(|ctx| {
 ///         // Perform custom transformation (for small in-line stuff, e.g. character stripping)
@@ -244,7 +245,99 @@ impl ContextBuilder {
         }
     }
 
-    // todo: send_stream
+    /// Stream a response from a provider, returning the raw stream for custom handling
+    pub fn send_streaming(
+        self,
+        adapter: StreamProviderAdapter,
+        system_message: String,
+        max_tokens: u32,
+        tools: Option<Vec<Tool>>,
+    ) -> BoxStream<'static, Result<PromptResponseDelta, String>> {
+        adapter(self.clone(), system_message, max_tokens, tools)
+    }
+
+    /// Stream a response from a provider with a callback for each delta
+    pub async fn send_streaming_with_callback<F>(
+        self,
+        adapter: StreamProviderAdapter,
+        system_message: String,
+        max_tokens: u32,
+        tools: Option<Vec<Tool>>,
+        callback: F,
+    ) -> Result<UnresolvedResponse, String>
+    where
+        F: Fn(Result<PromptResponseDelta, String>) + Send + Sync + 'static,
+    {
+        let stream = adapter(
+            self.clone(),
+            system_message.clone(),
+            max_tokens,
+            tools.clone(),
+        );
+
+        // Collect the stream into a complete PromptResponse
+        let mut content = String::new();
+        let mut final_stop_reason = StopReason::Null;
+        let mut tool_calls: Option<Vec<ToolCall>> = None;
+
+        // Process each delta
+        let mut stream = Box::pin(stream);
+        while let Some(delta_result) = stream.next().await {
+            // 1. Callback before the rest can break
+            callback(delta_result.clone());
+
+            if let Ok(delta) = delta_result {
+                // Append content
+                content.push_str(&delta.content);
+
+                // Update tool call if provided
+                if let Some(tool_call) = delta.tool_call {
+                    match &mut tool_calls {
+                        Some(calls) => calls.push(tool_call),
+                        None => tool_calls = Some(vec![tool_call]),
+                    }
+                }
+
+                // Stop
+                if let Some(reason) = delta.stop_reason {
+                    final_stop_reason = reason;
+                }
+            } else if let Err(err) = delta_result {
+                return Err(err);
+            }
+        }
+
+        // Create the final message and response
+        let message = Message {
+            role: MessageRole::Model,
+            content,
+            content_type: ContentType::Text,
+        };
+
+        let prompt_response = PromptResponse {
+            message,
+            stop_reason: final_stop_reason,
+            token_usage: 0,
+            tool_calls,
+        };
+
+        let prompt_response_clone = prompt_response.clone();
+
+        // Convert to standard provider adapter for resolution (I love this)
+        let standard_adapter: ProviderAdapter = Arc::new(move |_, _, _, _| {
+            let response = prompt_response_clone.clone();
+            Box::pin(async move { Ok(response) })
+        });
+
+        // Return as UnresolvedResponse for consistent API
+        Ok(UnresolvedResponse {
+            prompt_response,
+            context_builder: self,
+            tools,
+            adapter: standard_adapter,
+            system_message,
+        })
+    }
 }
 
 /* --------------------------- UnresolvedResponse --------------------------- */
