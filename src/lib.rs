@@ -330,7 +330,7 @@ impl ContextBuilder {
 ///     // Choose one of these resolution methods:
 ///     .resolve_without() // Simply add response to context
 ///     // OR
-///     .resolve_tool_calls(tool_resolver, 5, 1000).await // Handle tool calls recursively
+///     .resolve_tool_calls(tool_resolver, 5, adapter, 1000).await // Handle tool calls recursively
 ///     // OR
 ///     .resolve_with(|ur| async move {
 ///         // Custom async resolution logic
