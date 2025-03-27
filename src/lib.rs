@@ -436,7 +436,7 @@ impl UnresolvedResponse {
                     .add_message(self.prompt_response.message),
                 StopReason::ToolCalls => {
                     // Resolve tool calls building tool_res
-                    // Todo: this should probably be generalized so adapters can format tool calls as needed
+                    // Todo: this should probably be generalized so adapters can format tool responses as needed
 
                     let mut tool_res = String::new();
                     if let Some(tool_calls) = self.prompt_response.tool_calls {
@@ -468,8 +468,7 @@ impl UnresolvedResponse {
                         .await
                 }
                 StopReason::Null => {
-                    // TODO: handle Null reason
-                    self.context_builder
+                    panic!("Unexpected StopReason::Null encountered during tool call resolution");
                 }
             }
         })
