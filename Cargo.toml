@@ -2,6 +2,8 @@
 name = "steelwool"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Lightweight library for delivering LLM services"
 
 [features]
 default = []
