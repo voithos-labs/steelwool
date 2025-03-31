@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling", "hatch-requirements-txt"]
+build-backend = "hatchling.build"
+
+[project]
+name="steelwool"
+version = "0.0.1"
+authors = [
+    {name="Alex Lohnes", email="alexanderjlohnes@gmail.com"},
+]
+description = "Python port of the steelwool system"
+readme = "README.md"
+requires-python = ">=3.8"
+dynamic = ["dependencies"]
+
+[tool.hatch.metadata.hooks.requirements_txt]
+files = ["requirements.txt"]
