@@ -8,8 +8,7 @@ __all__ = [
     # Submodules
     enums,
     types,
-
     # Objects
     ContextBuilder,
-    UnresolvedResponse
+    UnresolvedResponse,
 ]

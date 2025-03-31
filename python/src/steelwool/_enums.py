@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class MessageRole(Enum):
     USER = "user"
     MODEL = "model"
@@ -7,8 +8,10 @@ class MessageRole(Enum):
     SYSTEM = "system"
     TOOL = "tool"
 
+
 class ContentType(Enum):
     TEXT = "text"
+
 
 class StopReason(Enum):
     STOP = "stop"
@@ -17,8 +20,5 @@ class StopReason(Enum):
     TOOL_CALLS = "tool_calls"
     NULL = "null"
 
-__all__ = [
-    MessageRole,
-    ContentType,
-    StopReason
-]
+
+__all__ = [MessageRole, ContentType, StopReason]
