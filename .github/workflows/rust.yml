@@ -21,12 +21,17 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./rust -> target"
 
       - name: Check Formatting
+        working-directory: ./rust
         run: cargo fmt --all -- --check
 
       - name: Check with Clippy
+        working-directory: ./rust
         run: cargo clippy -- -D warnings
 
       - name: Run tests without default features
+        working-directory: ./rust
         run: cargo test --no-default-features
