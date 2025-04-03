@@ -6,19 +6,8 @@ lightweight library for interacting with LLMs
 
 - [x] Core impl
 - [x] Fully generalized stream handling
-- [ ] Unified tool format
-- [ ] Node (typescript) & python port
-
-## Testing
-
-To test the basic ollama integration, run in root:
-
-```
-cargo test --features ollama
-```
-
-To see debug output add:
-
-```
-cargo test --features ollama -- --nocapture
-```
+- [x] Unified tool format
+- [x] Node (typescript)
+- [ ] Python port
+- [ ] Fix in-code docs
+- [ ] Write actual docs
