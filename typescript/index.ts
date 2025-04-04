@@ -18,9 +18,7 @@ export type PromptFuture = Promise<PromptResponse>;
  * export function ollamaAdapterFactory(modelName: string): ProviderAdapter {
  *   return async (
  *     context: ContextBuilder,
- *     systemMessage: string,
- *     maxTokens: number,
- *     tools?: Tool[]
+ *     maxTokens: number
  *   ) => {
  *     const history = context.history;
  *
@@ -32,9 +30,7 @@ export type PromptFuture = Promise<PromptResponse>;
  */
 export type ProviderAdapter = (
   context: ContextBuilder,
-  systemMessage: string,
-  maxTokens: number,
-  tools?: Tool[]
+  maxTokens: number
 ) => PromptFuture;
 
 /**
@@ -45,17 +41,17 @@ export type ProviderAdapter = (
  */
 export type StreamProviderAdapter = (
   context: ContextBuilder,
-  systemMessage: string,
-  maxTokens: number,
-  tools?: Tool[]
+  maxTokens: number
 ) => Observable<PromptResponseDelta>;
 
 /**
- * ToolResolver
+ * ToolExecuter
  *
  * Function for executing tool calls and returning their results as strings
+ * Serves as the implementation bridge between model-requested tool operations
+ * and the actual business logic that performs those operations
  */
-export type ToolResolver = (toolCall: ToolCall) => string;
+export type ToolExecuter = (toolCall: ToolCall) => Promise<string>;
 
 /* ------------------------------ Data Interfaces --------------------------- */
 
@@ -117,11 +113,14 @@ export interface ToolCall {
 }
 
 /**
- * Parameter
+ * ToolResult
+ *
+ * Result of a tool call execution
  */
-export interface Parameter {
-  returnType: string;
-  // ... todo
+export interface ToolResult {
+  toolCallId: string;
+  result: string;
+  error: boolean;
 }
 
 /* ---------------------------------- Enums --------------------------------- */
@@ -184,9 +183,13 @@ export enum StopReason {
  *   .transformWith(ctx => {
  *     // Custom transformation
  *     return ctx;
- *   })
- *   .send(adapter, "System message", 1000, tools)
- *   .then(unresolvedResponse => unresolvedResponse.resolveWithout());
+ *   });
+ *
+ * // Send to LLM and get response
+ * const response = await contextBuilder.send(adapter, 1000);
+ *
+ * // Simply add the response to history
+ * const newContext = response.resolveWithout();
  * ```
  */
 export class ContextBuilder {
@@ -219,19 +222,11 @@ export class ContextBuilder {
    */
   async send(
     adapter: ProviderAdapter,
-    systemMessage: string,
-    maxTokens: number,
-    tools?: Tool[]
+    maxTokens: number
   ): Promise<UnresolvedResponse> {
     try {
-      const promptResponse = await adapter(
-        this.clone(),
-        systemMessage,
-        maxTokens,
-        tools
-      );
-
-      return new UnresolvedResponse(promptResponse, this, tools, systemMessage);
+      const promptResponse = await adapter(this.clone(), maxTokens);
+      return new UnresolvedResponse(promptResponse, this);
     } catch (e) {
       throw new Error(`Failed to get PromptResponse: ${e}`);
     }
@@ -242,11 +237,9 @@ export class ContextBuilder {
    */
   sendStreaming(
     adapter: StreamProviderAdapter,
-    systemMessage: string,
-    maxTokens: number,
-    tools?: Tool[]
+    maxTokens: number
   ): Observable<PromptResponseDelta> {
-    return adapter(this.clone(), systemMessage, maxTokens, tools);
+    return adapter(this.clone(), maxTokens);
   }
 
   /**
@@ -254,12 +247,10 @@ export class ContextBuilder {
    */
   async sendStreamingWithCallback(
     adapter: StreamProviderAdapter,
-    systemMessage: string,
     maxTokens: number,
-    callback: (delta: PromptResponseDelta) => void,
-    tools?: Tool[]
+    callback: (delta: PromptResponseDelta) => void
   ): Promise<UnresolvedResponse> {
-    const stream = adapter(this.clone(), systemMessage, maxTokens, tools);
+    const stream = adapter(this.clone(), maxTokens);
 
     // Collect the stream into a complete PromptResponse
     let content = "";
@@ -302,10 +293,12 @@ export class ContextBuilder {
             tokenUsage: 0,
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           };
+
           // Return as UnresolvedResponse for consistent API
-          resolve(
-            new UnresolvedResponse(promptResponse, this, tools, systemMessage)
-          );
+          resolve(new UnresolvedResponse(promptResponse, this));
+
+          // Clean up subscription
+          subscription.unsubscribe();
         },
       });
     });
@@ -334,12 +327,12 @@ export class ContextBuilder {
  *
  * ```typescript
  * const resolvedContext = await contextBuilder
- *   .send(adapter, "System message", 1000, tools)
+ *   .send(adapter, 1000)
  *   .then(unresolvedResponse => {
  *     // Choose one of these resolution methods:
  *     return unresolvedResponse.resolveWithout() // Simply add response to context
  *     // OR
- *     return unresolvedResponse.resolveToolCalls(toolResolver, adapter, 5, 1000) // Handle tool calls recursively
+ *     return unresolvedResponse.resolve(toolExecuter) // Execute tool calls and add to context
  *     // OR
  *     return unresolvedResponse.resolveWith(async (ur) => {
  *       // Custom async resolution logic
@@ -351,80 +344,69 @@ export class ContextBuilder {
 export class UnresolvedResponse {
   constructor(
     public promptResponse: PromptResponse,
-    public contextBuilder: ContextBuilder,
-    public tools: Tool[] | undefined,
-    public systemMessage: string
+    public contextBuilder: ContextBuilder
   ) {}
 
   /**
-   * Resolve tool calls recursively provided an adapter
+   * Resolve by executing tool calls and adding results to context
    */
-  async resolveToolCallsRecurse(
-    toolResolver: ToolResolver,
-    adapter: ProviderAdapter,
-    toolRepromptDepth: number,
-    maxTokens: number
-  ): Promise<ContextBuilder> {
-    // Base case: stop if depth is 0 or tokens are exhausted
-    if (toolRepromptDepth === 0 || maxTokens === 0) {
-      return this.contextBuilder.addMessage(this.promptResponse.message);
-    }
-
-    switch (this.promptResponse.stopReason) {
-      case StopReason.Stop:
-      case StopReason.Length:
-      case StopReason.ContentFilter:
-        return this.contextBuilder.addMessage(this.promptResponse.message);
-
-      case StopReason.ToolCalls:
-        // Resolve tool calls
-        let toolResults = "";
-        if (
-          this.promptResponse.toolCalls &&
-          this.promptResponse.toolCalls.length > 0
-        ) {
-          for (const toolCall of this.promptResponse.toolCalls) {
-            const result = toolResolver(toolCall);
-            toolResults += result + "\n";
-          }
-        } else {
-          return this.contextBuilder;
-        }
-
-        // Add model response and tool results to context
-        const updatedContext = this.contextBuilder
-          .addMessage(this.promptResponse.message)
-          .addMessage({
-            role: MessageRole.Tool,
-            contentType: ContentType.Text,
-            content: toolResults,
-          });
-
-        // Send updated context back to the model
-        const nextResponse = await updatedContext.send(
-          adapter,
-          this.systemMessage,
-          maxTokens,
-          this.tools
-        );
-
-        // Recursively resolve next response
-        return nextResponse.resolveToolCallsRecurse(
-          toolResolver,
-          adapter,
-          toolRepromptDepth - 1,
-          maxTokens - this.promptResponse.tokenUsage
-        );
-
-      case StopReason.Null:
-      default:
-        throw new Error(
-          `Unhandled stop reason: ${this.promptResponse.stopReason}`
-        );
-    }
+  async resolve(toolExecuter: ToolExecuter): Promise<ContextBuilder> {
+    const result = await this.execToolCalls(toolExecuter);
+    return result.contextBuilder;
   }
 
-  async resolveToolCalls(toolResolver: ToolResolver) {}
+  /**
+   * Resolve with retry logic when tool calls fail
+   * (Currently a placeholder for future implementation)
+   */
+  async resolveWithRetry(
+    toolExecuter: ToolExecuter,
+    retryDepth?: number
+  ): Promise<ContextBuilder> {
+    // todo
+    return this.contextBuilder;
+  }
+
+  /**
+   * Execute any tool calls and add the results to context
+   */
+  async execToolCalls(toolExecuter: ToolExecuter): Promise<UnresolvedResponse> {
+    // First add the model's message to the context
+    let updatedContextBuilder = this.contextBuilder.addMessage(
+      this.promptResponse.message
+    );
+
+    // If there are no tool calls or the stop reason isn't ToolCalls, just return
+    if (
+      this.promptResponse.stopReason !== StopReason.ToolCalls ||
+      !this.promptResponse.toolCalls
+    ) {
+      return this;
+    }
+
+    // Process tool calls
+    let toolResults = "";
+
+    for (const toolCall of this.promptResponse.toolCalls) {
+      try {
+        const result = await toolExecuter(toolCall);
+        toolResults += result;
+      } catch (err) {
+        toolResults += `Error in tool call ${toolCall.id} of ${toolCall.name}: ${err}`;
+      }
+      toolResults += "\n";
+    }
+
+    // Add tool results as a Tool message
+    updatedContextBuilder = updatedContextBuilder.addMessage({
+      role: MessageRole.Tool,
+      contentType: ContentType.Text,
+      content: toolResults,
+    });
+
+    // Return a new UnresolvedResponse with the updated context
+    return new UnresolvedResponse(this.promptResponse, updatedContextBuilder);
+  }
 
   /**
    * Resolve to ContextBuilder with async resolver
@@ -444,6 +426,26 @@ export class UnresolvedResponse {
     resolver: (unresolvedResponse: UnresolvedResponse) => ContextBuilder
   ): ContextBuilder {
     return resolver(this);
+  }
+
+  /**
+   * Transform with async transformer that returns UnresolvedResponse
+   */
+  async transformWith(
+    transformer: (
+      unresolvedResponse: UnresolvedResponse
+    ) => Promise<UnresolvedResponse>
+  ): Promise<UnresolvedResponse> {
+    return transformer(this);
+  }
+
+  /**
+   * Transform with synchronous transformer that returns UnresolvedResponse
+   */
+  transformWithSync(
+    transformer: (unresolvedResponse: UnresolvedResponse) => UnresolvedResponse
+  ): UnresolvedResponse {
+    return transformer(this);
   }
 
   /**
