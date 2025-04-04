@@ -25,21 +25,26 @@ pub mod providers {
 /* ------------------------------- Signatures ------------------------------- */
 
 /// ## `PromptFuture`
-/// **Type Alias**: Describes a typed future `PromptResponse` that represents the returned data
-/// from any given LLM `send` interaction
+/// **Type Alias**: Describes a typed future returning a `PromptResponse` that represents
+/// the result of an LLM interaction
 pub type PromptFuture = Pin<Box<dyn Future<Output = Result<PromptResponse, String>> + Send>>;
 
 /// ## `ProviderAdapter`
 ///
-/// **Use:** for creating adapter function factories, e.g.:
+/// **Type Alias**: Function adapter for sending requests to LLM providers.
 ///
+/// **Parameters**:
+/// - `context: ContextBuilder` - The context containing message history
+/// - `max_tokens: u32` - Maximum number of tokens for the response
+///
+/// **Returns**: A `PromptFuture` containing the model's response
+///
+/// **Example**:
 /// ```rust,ignore
 /// pub fn ollama_adapter_factory(model_name: String) -> ProviderAdapter {
 ///     Arc::new(
 ///         move |context: ContextBuilder,
-///               system_message: String,
-///               _max_tokens: u32,
-///               _tools: Option<Vec<Tool>>| {
+///               max_tokens: u32| {
 ///             let model = model_name.clone();
 ///             let history = context.history.clone();
 ///
@@ -49,11 +54,8 @@ pub type PromptFuture = Pin<Box<dyn Future<Output = Result<PromptResponse, Strin
 ///         }
 ///     )
 /// }
-///
 /// ```
-///
-pub type ProviderAdapter =
-    Arc<dyn Fn(ContextBuilder, String, u32, Option<Vec<Tool>>) -> PromptFuture + Send + Sync>;
+pub type ProviderAdapter = Arc<dyn Fn(ContextBuilder, u32) -> PromptFuture + Send + Sync>;
 
 /// ## `StreamProviderAdapter`
 /// **Type Alias**: Function adapter for streaming responses from LLM providers.
@@ -61,33 +63,31 @@ pub type ProviderAdapter =
 /// Similar to ProviderAdapter but returns a stream of response chunks instead of a single future.
 /// Enables processing partial responses as they arrive from the model.
 pub type StreamProviderAdapter = Arc<
-    dyn Fn(
-            ContextBuilder,
-            String,
-            u32,
-            Option<Vec<Tool>>,
-        ) -> BoxStream<'static, Result<PromptResponseDelta, String>>
+    dyn Fn(ContextBuilder, u32) -> BoxStream<'static, Result<PromptResponseDelta, String>>
         + Send
         + Sync,
 >;
 
-/// ## `ToolResolver`
+/// ## `ToolExecuter`
 /// Function for executing tool calls and returning their results as strings.
 ///
 /// Serves as the implementation bridge between model-requested tool operations
 /// and the actual business logic that performs those operations
-pub type ToolResolver = Arc<dyn Fn(ToolCall) -> String + Send + Sync>;
+pub type ToolExecuter = Arc<
+    dyn Fn(ToolCall) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
+>;
 
 /* ------------------------------ Data Structs ------------------------------ */
 
 // Message
 
 /// Atomic message type with a specific role, content, and content type.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Message {
     pub role: MessageRole,
     pub content: String,
     pub content_type: ContentType,
+    // pub tool_results: Option<Vec<ToolResult>>,
 }
 
 // Responses
@@ -113,7 +113,7 @@ pub struct PromptResponseDelta {
 
 /// Describes a tool available to a model
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Tool {
+pub struct ToolDescriptor {
     pub name: String,
     pub description: String,
     pub schema: serde_json::Value,
@@ -128,11 +128,12 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
 }
 
-// #[derive(Clone, Serialize, Deserialize)]
-// pub struct ToolResult {
-//     pub tool_call_id: String,
-//     pub content: String,
-// }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub result: String,
+    pub error: bool,
+}
 
 /* ---------------------------------- Enums --------------------------------- */
 
@@ -167,27 +168,22 @@ pub enum StopReason {
 /// ```rust,ignore
 /// let context_builder = ContextBuilder::new()
 ///     .add_message(message) // -> ContextBuilder
-///     .your_transformer(<args>) // your custom transformer -> ContextBuilder
-///     .self_rag(vector_interface) // -> ContextBuilder
 ///     .transform_with(|ctx| {
-///         // Perform custom transformation (for small in-line stuff, e.g. character stripping)
-///         // otherwise implement a standalone transformer for more advanced tasks
-///         // E.g. 'impl CustomTransformers for ContextBuilder { ... }'
-///         // see .your_transformer()
+///         // Perform custom transformation
 ///         ctx
 ///     })
-///     .send(adapter, "System message".to_string(), 1000, tools); // async send; non-streaming
+///     .send(adapter, 1000) // async send; non-streaming
 ///     .await
-///     .resolve_without(); // RESOLVER
-///     // See `UnresolvedResponse` for dealing with unresolved
-///     // states returned by send opertaions
+///     .resolve_without(); // Add response to history
 /// ```
-/// ---
+///
 /// ## Methods
 ///
-/// - `transform_with`: Allows applying a custom transformation function to the builder.
-/// - `add_message`: Adds a message to the context's history.
-/// - `send`: Sends the context using a specified adapter and returns an `UnresolvedResponse`.
+/// - `transform_with`: Applies a custom transformation function to the builder
+/// - `add_message`: Adds a message to the context's history
+/// - `send`: Sends the context to an LLM and returns an `UnresolvedResponse`
+/// - `send_streaming`: Sends the context and returns a stream of response deltas
+/// - `send_streaming_with_callback`: Streams with a callback for each delta
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ContextBuilder {
     pub history: Vec<Message>,
@@ -201,7 +197,7 @@ impl ContextBuilder {
         transformer(self)
     }
 
-    pub fn add_message(mut self, msg: Message) -> ContextBuilder {
+    pub fn add_message(mut self, msg: Message) -> Self {
         self.history.push(msg);
         self
     }
@@ -209,23 +205,13 @@ impl ContextBuilder {
     pub async fn send(
         self,
         adapter: ProviderAdapter, // Accept a boxed Send adapter
-        system_message: String,
         max_tokens: u32,
-        tools: Option<Vec<Tool>>,
     ) -> UnresolvedResponse {
-        let prompt_response = adapter(
-            self.clone(),
-            system_message.clone(),
-            max_tokens,
-            tools.clone(),
-        )
-        .await;
+        let prompt_response = adapter(self.clone(), max_tokens).await;
         UnresolvedResponse {
             prompt_response: prompt_response
                 .unwrap_or_else(|e| panic!("Failed to get PromptResponse: {}", e)),
             context_builder: self,
-            tools,
-            system_message,
         }
     }
 
@@ -233,31 +219,22 @@ impl ContextBuilder {
     pub fn send_streaming(
         self,
         adapter: StreamProviderAdapter,
-        system_message: String,
         max_tokens: u32,
-        tools: Option<Vec<Tool>>,
     ) -> BoxStream<'static, Result<PromptResponseDelta, String>> {
-        adapter(self.clone(), system_message, max_tokens, tools)
+        adapter(self.clone(), max_tokens)
     }
 
     /// Stream a response from a provider with a callback for each delta
     pub async fn send_streaming_with_callback<F>(
         self,
         adapter: StreamProviderAdapter,
-        system_message: String,
         max_tokens: u32,
-        tools: Option<Vec<Tool>>,
         callback: F,
     ) -> Result<UnresolvedResponse, String>
     where
         F: Fn(Result<PromptResponseDelta, String>) + Send + Sync + 'static,
     {
-        let stream = adapter(
-            self.clone(),
-            system_message.clone(),
-            max_tokens,
-            tools.clone(),
-        );
+        let stream = adapter(self.clone(), max_tokens);
 
         // Collect the stream into a complete PromptResponse
         let mut content = String::new();
@@ -309,8 +286,6 @@ impl ContextBuilder {
         Ok(UnresolvedResponse {
             prompt_response,
             context_builder: self,
-            tools,
-            system_message,
         })
     }
 }
@@ -325,12 +300,12 @@ impl ContextBuilder {
 ///
 /// ```rust,ignore
 /// let resolved_context = context_builder
-///     .send(adapter, "System message".to_string(), 1000, tools)
+///     .send(adapter, 1000)
 ///     .await
 ///     // Choose one of these resolution methods:
 ///     .resolve_without() // Simply add response to context
 ///     // OR
-///     .resolve_tool_calls(tool_resolver, 5, adapter, 1000).await // Handle tool calls recursively
+///     .resolve(tool_executer).await // Execute tool calls and add to context
 ///     // OR
 ///     .resolve_with(|ur| async move {
 ///         // Custom async resolution logic
@@ -342,160 +317,114 @@ impl ContextBuilder {
 ///         ur.context_builder.add_message(ur.prompt_response.message)
 ///     });
 /// ```
+/// *also supports chaining, see `exec_tool_calls` and `transform_with`
 ///
-/// ### Extending
-/// You can also make your own transformer that matches the pattern;
-/// UnresolvedResponse (self) -> ContextBuilder
-///
-/// e.g.:
-///
-/// ```rust,ignore
-/// impl CustomResolvers for UnresolvedResponse {
-///     fn resolve_and_log(self) -> ContextBuilder {
-///         println!("Response resolved, token usage: {}", self.prompt_response.token_usage);
-///         self.context_builder.add_message(self.prompt_response.message)
-///     }
-/// }
-/// ```
-/// ---
 /// ## Methods
 ///
-/// - `resolve_tool_calls`: Recursively resolves tool calls, feeding results back to the model.
-/// - `resolve_with`: Applies a custom async transformation function to resolve the response.
-/// - `resolve_with_sync`: Applies a custom synchronous transformation function to resolve the response.
-/// - `resolve_without`: Simply adds the response message to the context without additional processing.
+/// - `resolve`: Executes any tool calls and returns the updated context
+/// - `resolve_with_retry`: Handles tool calls with retry logic
+/// - `resolve_without`: Adds the response to context without handling tool calls
+/// - `exec_tool_calls`: Executes tool calls and adds results to context
+/// - `resolve_with`/`resolve_with_sync`: Custom resolution with async/sync functions
+/// - `transform_with`/`transform_with_sync`: Custom transformations returning `Self`
 #[derive(Serialize, Deserialize, Clone)]
 pub struct UnresolvedResponse {
     pub prompt_response: PromptResponse,
     pub context_builder: ContextBuilder,
-    pub tools: Option<Vec<Tool>>,
-    pub system_message: String,
 }
 
 impl UnresolvedResponse {
-    pub fn resolve_tool_calls(self, tool_resolver: ToolResolver) -> ContextBuilder {
-        let mut context_builder = self.context_builder;
+    pub async fn resolve(self, tool_executer: ToolExecuter) -> ContextBuilder {
+        let unresolved_response = self.exec_tool_calls(tool_executer).await;
+        unresolved_response.context_builder
+    }
+
+    pub async fn resolve_with_retry(
+        self,
+        tool_executer: ToolExecuter,
+        retry_depth: Option<usize>,
+    ) -> ContextBuilder {
+        // todo
+        self.context_builder
+    }
+
+    pub fn resolve_without(self) -> ContextBuilder {
+        self.context_builder
+            .add_message(self.prompt_response.message)
+    }
+
+    pub async fn exec_tool_calls(self, tool_executer: ToolExecuter) -> Self {
+        let mut unresolved_response = self.clone();
 
         // Add the current message to the context
-        context_builder = context_builder.add_message(self.prompt_response.message);
+        unresolved_response.context_builder = self
+            .context_builder
+            .add_message(self.prompt_response.message.clone());
 
         // If there are no tool calls or the stop reason isn't ToolCalls, just return
         if self.prompt_response.stop_reason != StopReason::ToolCalls
             || self.prompt_response.tool_calls.is_none()
         {
-            return context_builder;
+            return unresolved_response;
         }
 
         // Resolve tool calls
         let mut tool_res = String::new();
 
-        if let Some(tool_calls) = self.prompt_response.tool_calls {
+        if let Some(tool_calls) = self.prompt_response.tool_calls.clone() {
             for tool_call in tool_calls {
-                let result = tool_resolver(tool_call);
-                tool_res.push_str(&result);
+                let result = tool_executer(tool_call.clone()).await;
+                match result {
+                    Ok(output) => tool_res.push_str(&output),
+                    Err(err) => tool_res.push_str(&format!(
+                        "Error in tool call {} of {}: {}",
+                        tool_call.id, tool_call.name, err
+                    )),
+                }
                 tool_res.push('\n'); // Add a newline after each result
             }
         }
 
         // Add tool response message to the context
-        context_builder.add_message(Message {
-            role: MessageRole::Tool,
-            content_type: ContentType::Text,
-            content: tool_res,
-        })
+        unresolved_response.context_builder =
+            unresolved_response.context_builder.add_message(Message {
+                role: MessageRole::Tool,
+                content_type: ContentType::Text,
+                content: tool_res,
+            });
+
+        unresolved_response
     }
 
-    /// Recursively resolves tool calls in a model response and feeds results back to the model
-    ///
-    /// Takes a tool resolver function that handles executing tool calls and converting results to strings.
-    /// Implements an agent pattern with controlled recursion depth and token budget management.
-    ///
-    /// # Arguments
-    /// * `tool_resolver` - Function that processes `ToolCall` objects and returns string results
-    /// * `tool_reprompt_depth` - Maximum recursion depth for tool-model interaction cycles
-    /// * `max_tokens` - Token budget for all subsequent model calls (decremented with each call)
-    pub fn resolve_tool_calls_recurse(
-        self,
-        tool_resolver: ToolResolver,
-        tool_reprompt_depth: usize,
-        adapter: ProviderAdapter,
-        max_tokens: u32,
-    ) -> Pin<Box<dyn Future<Output = ContextBuilder> + Send>> {
-        Box::pin(async move {
-            // Base case: stop if depth is 0 or tokens are exhausted
-            if tool_reprompt_depth == 0 || max_tokens == 0 {
-                return self
-                    .context_builder
-                    .add_message(self.prompt_response.message);
-            }
+    // Silly methods for lazy extensions
 
-            // Handle stop reasons
-            match self.prompt_response.stop_reason {
-                StopReason::Stop | StopReason::Length | StopReason::ContentFilter => self
-                    .context_builder
-                    .add_message(self.prompt_response.message),
-                StopReason::ToolCalls => {
-                    // Resolve tool calls building tool_res
-                    // Todo: this should probably be generalized so adapters can format tool responses as needed
-
-                    let mut tool_res = String::new();
-                    if let Some(tool_calls) = self.prompt_response.tool_calls {
-                        for tool_call in tool_calls {
-                            let result = tool_resolver(tool_call.clone());
-                            tool_res.push_str(&result);
-                            tool_res.push('\n'); // Add a newline after each result
-                        }
-                    } else {
-                        return self.context_builder;
-                    }
-
-                    // Unravel the steelwool
-                    self.context_builder
-                        .add_message(self.prompt_response.message)
-                        .add_message(Message {
-                            role: MessageRole::Tool,
-                            content_type: ContentType::Text,
-                            content: tool_res,
-                        })
-                        .send(adapter.clone(), self.system_message, max_tokens, self.tools)
-                        .await
-                        .resolve_tool_calls_recurse(
-                            tool_resolver,
-                            tool_reprompt_depth - 1,
-                            adapter,
-                            max_tokens - self.prompt_response.token_usage,
-                        )
-                        .await
-                }
-                StopReason::Null => {
-                    panic!("Unexpected StopReason::Null encountered during tool call resolution");
-                }
-            }
-        })
-    }
-
-    /// Resolve to ContextBuilder with async resolver, good for simple custom resolver usecases
     pub async fn resolve_with<F, Fut>(self, resolver: F) -> ContextBuilder
     where
-        F: FnOnce(UnresolvedResponse) -> Fut + Send,
+        F: FnOnce(Self) -> Fut + Send,
         Fut: Future<Output = ContextBuilder> + Send,
     {
         resolver(self).await
     }
 
-    /// Resolve `UnresolvedResponse` instance with a synchronous resolver that returns a new `ContextBuilder`
     pub fn resolve_with_sync<F>(self, resolver: F) -> ContextBuilder
     where
-        F: FnOnce(UnresolvedResponse) -> ContextBuilder + Send,
+        F: FnOnce(Self) -> ContextBuilder + Send,
     {
         resolver(self)
     }
 
-    /// Resolves the response without handling tool calls or additional processing
-    ///
-    /// This simply adds the prompt response message to the context builder
-    pub fn resolve_without(self) -> ContextBuilder {
-        self.context_builder
-            .add_message(self.prompt_response.message)
+    pub async fn transform_with<F, Fut>(self, resolver: F) -> Self
+    where
+        F: FnOnce(Self) -> Fut + Send,
+        Fut: Future<Output = Self> + Send,
+    {
+        resolver(self).await
+    }
+
+    pub fn transform_with_sync<F>(self, resolver: F) -> Self
+    where
+        F: FnOnce(Self) -> Self + Send,
+    {
+        resolver(self)
     }
 }
