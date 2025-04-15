@@ -6,8 +6,9 @@ license = "MIT"
 description = "Lightweight library for delivering LLM services"
 
 [features]
-default = []
+default = ["openai"]
 ollama = ["ollama-rs", "tokio-runtime"]
+openai = ["openai-api-rs"]
 tokio-runtime = ["tokio"]
 
 [dependencies]
@@ -20,3 +21,7 @@ tokio = { version = "^1.0", features = ["full"], optional = true }
 version = "0.2.6"
 optional = true
 features = ["stream"] 
+
+[dependencies.openai-api-rs]
+version = "6.0.3"
+optional = true

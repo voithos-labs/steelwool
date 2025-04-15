@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 pub mod providers {
     #[cfg(feature = "ollama")]
     pub mod ollama;
+    #[cfg(feature = "openai")]
+    pub mod openai;
 }
 
 /* ------------------------------- Signatures ------------------------------- */
