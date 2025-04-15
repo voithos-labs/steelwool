@@ -7,13 +7,15 @@ mod tests {
     #[cfg(feature = "ollama")]
     use steelwool::providers::ollama::{ollama_adapter_factory, ollama_streaming_adapter_factory};
     #[cfg(feature = "ollama")]
-    use steelwool::{ContentType, ContextBuilder, Message, MessageRole, PromptResponseDelta};
+    use steelwool::{ContentType, ContextBuilder, Message, MessageRole};
 
     #[tokio::test]
     #[cfg(feature = "ollama")]
     async fn test_ollama_integration() {
         let model_name = "llama3.2".to_string();
-        let adapter = ollama_adapter_factory(model_name);
+        let system_message =
+            "You are a helpful, concise assistant. Keep your answers brief.".to_string();
+        let adapter = ollama_adapter_factory(model_name, system_message, None);
 
         let context = ContextBuilder { history: vec![] }.add_message(Message {
             role: MessageRole::User,
@@ -21,13 +23,7 @@ mod tests {
             content_type: ContentType::Text,
         });
 
-        let system_message =
-            "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-
-        let response = context
-            .send(adapter, system_message, 1000, None)
-            .await
-            .resolve_without();
+        let response = context.send(adapter, 1000).await.resolve_without();
 
         assert!(!response.history.is_empty());
         for message in response.history {
@@ -46,7 +42,10 @@ mod tests {
     #[cfg(feature = "ollama")]
     async fn test_ollama_streaming_integration() {
         let model_name = "llama3.2".to_string();
-        let streaming_adapter = ollama_streaming_adapter_factory(model_name.clone());
+        let system_message =
+            "You are a helpful, concise assistant. Keep your answers brief.".to_string();
+        let streaming_adapter =
+            ollama_streaming_adapter_factory(model_name.clone(), system_message.clone(), None);
 
         let context = ContextBuilder { history: vec![] }.add_message(Message {
             role: MessageRole::User,
@@ -54,17 +53,11 @@ mod tests {
             content_type: ContentType::Text,
         });
 
-        let system_message =
-            "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-
         // Test 1: Basic streaming with DIRECT stream consumption
         println!("Testing direct stream consumption:");
-        let mut stream = context.clone().send_streaming(
-            streaming_adapter.clone(),
-            system_message.clone(),
-            1000,
-            None,
-        );
+        let mut stream = context
+            .clone()
+            .send_streaming(streaming_adapter.clone(), 1000);
 
         // Collect and display streamed content for debug
         let mut streamed_content = String::new();
@@ -99,29 +92,23 @@ mod tests {
         let counter_clone = callback_counter.clone();
         let content_clone = callback_content.clone();
 
-        let result = context
+        let _result = context
             .clone()
-            .send_streaming_with_callback(
-                streaming_adapter.clone(),
-                system_message.clone(),
-                1000,
-                None,
-                move |result| {
-                    if let Ok(delta) = result {
-                        print!("{}", delta.content);
+            .send_streaming_with_callback(streaming_adapter.clone(), 1000, move |result| {
+                if let Ok(delta) = result {
+                    print!("{}", delta.content);
 
-                        let mut counter = counter_clone.lock().unwrap();
-                        *counter += 1;
+                    let mut counter = counter_clone.lock().unwrap();
+                    *counter += 1;
 
-                        let mut content = content_clone.lock().unwrap();
-                        content.push_str(&delta.content);
+                    let mut content = content_clone.lock().unwrap();
+                    content.push_str(&delta.content);
 
-                        if delta.stop_reason.is_some() {
-                            println!("\n[Callback stream completed]");
-                        }
+                    if delta.stop_reason.is_some() {
+                        println!("\n[Callback stream completed]");
                     }
-                },
-            )
+                }
+            })
             .await;
 
         // Verify callback was called multiple times (streaming should produce multiple chunks)

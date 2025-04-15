@@ -1,0 +1,30 @@
+{
+  "name": "steelwool",
+  "version": "0.1.0",
+  "description": "Steelwool is a lightweight lib for managing LLM interactions across your pipeline",
+  "keywords": [
+    "LLMs",
+    "AI",
+    "pipeline",
+    "client-side",
+    "server-side"
+  ],
+  "homepage": "https://github.com/voithos-labs/steelwool#readme",
+  "bugs": {
+    "url": "https://github.com/voithos-labs/steelwool/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voithos-labs/steelwool.git"
+  },
+  "license": "MIT",
+  "author": "Voithos Labs Inc.",
+  "type": "commonjs",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.2"
+  }
+}
