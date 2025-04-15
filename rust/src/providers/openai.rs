@@ -1,9 +1,10 @@
-use std::{default, env};
 use std::sync::Arc;
 use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest, CreateChatCompletionRequestArgs
 };
 use async_openai::Client;
+use futures::stream::{self, BoxStream};
+use futures::StreamExt;
 
 use crate::{
     ContentType, ContextBuilder, Message, MessageRole, PromptResponse, PromptResponseDelta,
@@ -124,15 +125,87 @@ pub fn openai_adapter_factory(
                     tool_calls: None,
                 }
             )
-
         })
-
     })
 }
 
 // Streaming adapter factory
 pub fn openai_streaming_adapter_factory(
-    
+    model_name: String,
+    system_message: String,
+    tools: Option<Vec<ToolDescriptor>>,
 ) -> StreamProviderAdapter {
-    todo!()
+    Arc::new(move |context: ContextBuilder, max_tokens: u32| {
+
+        let model = model_name.clone();
+        let system_msg = system_message.clone();
+        let tools_clone = tools.clone();
+
+        let request_body = build_chat_completion_request(
+            &context, 
+            &system_msg, 
+            max_tokens, 
+            &model
+        );
+
+        let stream = async move {
+
+            let openai_client = Client::new();
+
+            let req_stream = openai_client
+                .chat()
+                .create_stream(request_body)
+                .await;
+
+            match req_stream {
+                Ok(mut response_stream) => {
+                    Box::pin(stream::poll_fn(move |cx| {
+                        response_stream.poll_next_unpin(cx).map(|opt| {
+                            match opt {
+                                Some(Ok(response)) => {
+
+                                    if response.choices.is_empty() {
+                                        return None;
+                                    }
+
+                                    let first_choice = &response.choices[0];
+
+                                    return Some(Ok(PromptResponseDelta {
+                                        content: first_choice.delta.content.clone().unwrap_or_default(),
+                                        stop_reason: match first_choice.finish_reason {
+                                            Some(reason) => match reason {
+                                                async_openai::types::FinishReason::Stop => Some(StopReason::Stop),
+                                                async_openai::types::FinishReason::Length => Some(StopReason::Length),
+                                                async_openai::types::FinishReason::ToolCalls => Some(StopReason::ToolCalls),
+                                                async_openai::types::FinishReason::ContentFilter => Some(StopReason::ContentFilter),
+                                                async_openai::types::FinishReason::FunctionCall => Some(StopReason::ToolCalls),
+                                            },
+                                            None => None,
+                                        },
+                                        tool_call: None,
+                                    }));
+                                    
+                                },
+                                Some(Err(e)) => {
+                                    Some(Err(format!("OpenAI streaming error: {:?}", e)))
+                                }
+                                None => None,
+                            }
+                        })
+                    }))
+                        as BoxStream<'static, Result<PromptResponseDelta, String>>
+                }
+                Err(e) => {
+                    Box::pin(stream::once(async move {
+                        Err(format!("Failed to start OpenAI stream: {:?}", e))
+                    })) 
+                        as BoxStream<'static, Result<PromptResponseDelta, String>>
+                }
+            }
+        };
+
+        return Box::pin(stream::once(stream).flatten())
+            as BoxStream<'static, Result<PromptResponseDelta, String>>;
+
+    })
 }
