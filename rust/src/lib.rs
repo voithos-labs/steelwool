@@ -107,6 +107,7 @@ pub struct PromptResponseDelta {
     pub content: String,
     pub stop_reason: Option<StopReason>,
     pub tool_call: Option<ToolCall>,
+    pub cumulative_tokens : u32,
 }
 
 // Tools
