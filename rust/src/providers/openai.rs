@@ -1,10 +1,13 @@
-use std::sync::Arc;
-use async_openai::types::{
-    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, CreateChatCompletionRequest, CreateChatCompletionRequestArgs, FinishReason
-};
 use async_openai::Client;
-use futures::stream::{self, BoxStream};
+use async_openai::types::{
+    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, CreateChatCompletionRequest,
+    CreateChatCompletionRequestArgs, FinishReason,
+};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream};
+use std::sync::Arc;
 
 use crate::{
     ContentType, ContextBuilder, Message, MessageRole, PromptResponse, PromptResponseDelta,
@@ -15,8 +18,7 @@ pub fn build_chat_completion_message_history(
     context: &ContextBuilder,
     system_message: &str,
 ) -> Vec<ChatCompletionRequestMessage> {
-
-    let mut msg_vec : Vec<ChatCompletionRequestMessage> = vec![];
+    let mut msg_vec: Vec<ChatCompletionRequestMessage> = vec![];
 
     // Push the system message into the msg_vec
     msg_vec.push(
@@ -24,52 +26,40 @@ pub fn build_chat_completion_message_history(
             .content(system_message)
             .build()
             .unwrap()
-            .into()
+            .into(),
     );
 
     for msg in &context.history {
-
-        msg_vec.push(
-            match msg.role {
-                MessageRole::User => {
-                    ChatCompletionRequestUserMessageArgs::default()
-                        .content(msg.content.to_string())
-                        .build()
-                        .unwrap()
-                        .into()
-                },
-                MessageRole::Model => {
-                    // TODO: This is where you would add tool calls when they happen
-                    ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(msg.content.to_string())
-                        .build()
-                        .unwrap()
-                        .into()
-                },
-                MessageRole::Function => {
-                    ChatCompletionRequestToolMessageArgs::default()
-                        .content(msg.content.to_string())
-                        .build()
-                        .unwrap()
-                        .into()
-                },
-                MessageRole::System => {
-                    ChatCompletionRequestSystemMessageArgs::default()
-                        .content(msg.content.to_string())
-                        .build()
-                        .unwrap()
-                        .into()
-                },
-                MessageRole::Tool => {
-                    ChatCompletionRequestToolMessageArgs::default()
-                        .content(msg.content.to_string())
-                        .build()
-                        .unwrap()
-                        .into()
-                },
+        msg_vec.push(match msg.role {
+            MessageRole::User => ChatCompletionRequestUserMessageArgs::default()
+                .content(msg.content.to_string())
+                .build()
+                .unwrap()
+                .into(),
+            MessageRole::Model => {
+                // TODO: This is where you would add tool calls when they happen
+                ChatCompletionRequestAssistantMessageArgs::default()
+                    .content(msg.content.to_string())
+                    .build()
+                    .unwrap()
+                    .into()
             }
-        );
-
+            MessageRole::Function => ChatCompletionRequestToolMessageArgs::default()
+                .content(msg.content.to_string())
+                .build()
+                .unwrap()
+                .into(),
+            MessageRole::System => ChatCompletionRequestSystemMessageArgs::default()
+                .content(msg.content.to_string())
+                .build()
+                .unwrap()
+                .into(),
+            MessageRole::Tool => ChatCompletionRequestToolMessageArgs::default()
+                .content(msg.content.to_string())
+                .build()
+                .unwrap()
+                .into(),
+        });
     }
 
     return msg_vec;
@@ -77,7 +67,7 @@ pub fn build_chat_completion_message_history(
 
 // Non-streaming adapter factory
 pub fn openai_adapter_factory(
-    model_name : String,
+    model_name: String,
     system_message: String,
     tools: Option<Vec<ToolDescriptor>>,
 ) -> ProviderAdapter {
@@ -135,36 +125,28 @@ pub fn openai_streaming_adapter_factory(
     tools: Option<Vec<ToolDescriptor>>,
 ) -> StreamProviderAdapter {
     Arc::new(move |context: ContextBuilder, max_tokens: u32| {
-
         let model = model_name.clone();
         let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         // Format the message history into the openai lib's one
-        let request_msgs = build_chat_completion_message_history(
-            &context, &system_message);
+        let request_msgs = build_chat_completion_message_history(&context, &system_message);
 
         // Build the request body
         let request_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(max_tokens)
             .model(model)
             .messages(request_msgs)
-            .stream_options(
-                ChatCompletionStreamOptions {
-                    include_usage: true
-                }
-            )
+            .stream_options(ChatCompletionStreamOptions {
+                include_usage: true,
+            })
             .build()
             .unwrap();
 
         let stream = async move {
-
             let openai_client = Client::new();
 
-            let req_stream = openai_client
-                .chat()
-                .create_stream(request_body)
-                .await;
+            let req_stream = openai_client.chat().create_stream(request_body).await;
 
             match req_stream {
                 Ok(mut response_stream) => {
@@ -216,17 +198,14 @@ pub fn openai_streaming_adapter_factory(
                     }))
                         as BoxStream<'static, Result<PromptResponseDelta, String>>
                 }
-                Err(e) => {
-                    Box::pin(stream::once(async move {
-                        Err(format!("Failed to start OpenAI stream: {:?}", e))
-                    })) 
-                        as BoxStream<'static, Result<PromptResponseDelta, String>>
-                }
+                Err(e) => Box::pin(stream::once(async move {
+                    Err(format!("Failed to start OpenAI stream: {:?}", e))
+                }))
+                    as BoxStream<'static, Result<PromptResponseDelta, String>>,
             }
         };
 
         return Box::pin(stream::once(stream).flatten())
             as BoxStream<'static, Result<PromptResponseDelta, String>>;
-
     })
 }

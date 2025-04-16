@@ -13,7 +13,7 @@ mod tests {
     #[cfg(feature = "openai")]
     async fn test_openai_integration() {
         let model_name = "gpt-3.5-turbo".to_string();
-        let system_message = 
+        let system_message =
             "You are a helpful, concise assistant. Keep your answers brief.".to_string();
         let adapter = openai_adapter_factory(model_name, system_message, None);
 
@@ -42,9 +42,9 @@ mod tests {
     #[cfg(feature = "openai")]
     async fn test_openai_streaming_integration() {
         let model_name = "gpt-3.5-turbo".to_string();
-        let system_message = 
+        let system_message =
             "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-        let streaming_adapter = 
+        let streaming_adapter =
             openai_streaming_adapter_factory(model_name.clone(), system_message.clone(), None);
 
         let context = ContextBuilder { history: vec![] }.add_message(Message {
@@ -61,7 +61,7 @@ mod tests {
 
         // Collect and display streamed content for debug
         let mut streamed_content = String::new();
-        let mut saw_tokens = false;  // Track if we ever see tokens
+        let mut saw_tokens = false; // Track if we ever see tokens
 
         while let Some(result) = stream.next().await {
             match result {
@@ -86,14 +86,17 @@ mod tests {
         }
 
         // Verify we got something and saw tokens
-        assert!(!streamed_content.is_empty(), "Stream should produce content");
+        assert!(
+            !streamed_content.is_empty(),
+            "Stream should produce content"
+        );
         assert!(saw_tokens, "Stream should report token usage at least once");
 
         // Test 2: Streaming with callback
         println!("\nTesting streaming with callback:");
         let callback_counter = Arc::new(Mutex::new(0));
         let callback_content = Arc::new(Mutex::new(String::new()));
-        let saw_tokens = Arc::new(Mutex::new(false));  // Track tokens in callback
+        let saw_tokens = Arc::new(Mutex::new(false)); // Track tokens in callback
 
         let counter_clone = callback_counter.clone();
         let content_clone = callback_content.clone();
@@ -135,7 +138,10 @@ mod tests {
             final_count
         );
         assert!(!final_content.is_empty(), "Callback should collect content");
-        assert!(final_saw_tokens, "Callback should report token usage at least once");
+        assert!(
+            final_saw_tokens,
+            "Callback should report token usage at least once"
+        );
         println!("Callback was called {} times", final_count);
     }
 }
