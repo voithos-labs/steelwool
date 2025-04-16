@@ -207,6 +207,10 @@ pub fn openai_streaming_adapter_factory(
 
             let req_stream = openai_client.chat().create_stream(request).await;
 
+            let mut prepared_tool_call: Option<ToolCall> = None;
+            let mut tool_call_buffer: Option<ToolCall> = None;
+            let mut arguments_buffer = String::new();
+
             match req_stream {
                 Ok(mut response_stream) => {
                     Box::pin(stream::poll_fn(move |cx| {
@@ -227,6 +231,61 @@ pub fn openai_streaming_adapter_factory(
 
                                     let first_choice = &response.choices[0];
 
+                                    // Handling the concatenation of tool calls & their args
+                                    if let Some(tool_chunks) = &first_choice.delta.tool_calls {
+                                        for chunk in tool_chunks {
+
+                                            let function = chunk.function.as_ref().unwrap();
+
+                                            // If a tool call is already in the building buffer but a NEW tool call name
+                                            // pops up, assume that there was another tool call and swap the old buffer to
+                                            // "prepared" to be sent off next round
+                                            if let Some(tool_call) = &tool_call_buffer {
+                                                if function.name.is_some() {
+
+                                                    // Move the buffers to "prepared"
+                                                    prepared_tool_call = Some(ToolCall { 
+                                                        arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone() 
+                                                    });
+
+                                                    // Reset the buffers
+                                                    tool_call_buffer = None;
+                                                    arguments_buffer = "".to_string();
+                                                }
+                                            }
+
+                                            // If there is no tool call in the buffer then start a new tool call
+                                            // and start a running 
+                                            if tool_call_buffer.is_none() {
+                                                tool_call_buffer = Some(
+                                                    ToolCall { 
+                                                        id: chunk.id.clone().unwrap(), 
+                                                        name: function.name.as_ref().unwrap().to_string(), 
+                                                        arguments: serde_json::Value::Null
+                                                    });
+                                                continue;
+                                            }
+
+                                            // Push additional arguments onto the arguments buffer
+                                            let tmp_args_content = arguments_buffer.clone();
+                                            arguments_buffer = tmp_args_content + &function.arguments.as_ref().cloned().unwrap_or_else(|| "".to_string());
+
+                                        }
+                                    }
+
+                                    if let Some(FinishReason::ToolCalls) = first_choice.finish_reason {
+                                        if let Some(tool_call) = &tool_call_buffer {
+                                            // Move the buffers to "prepared"
+                                            prepared_tool_call = Some(ToolCall { 
+                                                arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone() 
+                                            });
+    
+                                            // Reset the buffers
+                                            tool_call_buffer = None;
+                                            arguments_buffer = "".to_string();
+                                        }
+                                    }
+
                                     return Some(Ok(PromptResponseDelta {
                                         content: first_choice.delta.content.clone().unwrap_or_default(),
                                         stop_reason: match first_choice.finish_reason {
@@ -240,21 +299,8 @@ pub fn openai_streaming_adapter_factory(
                                             None => None,
                                         },
 
-                                        tool_calls: match first_choice.delta.tool_calls.as_ref() {
-                                            Some(tool_calls) => Some(
-                                                tool_calls
-                                                    .iter()                                                    
-                                                    .map(|tc| {
-                                                        ToolCall {
-                                                            id: tc.id.clone().unwrap_or_default(),
-                                                            name: tc.function.as_ref().and_then(|f| f.name.clone()).unwrap_or_default(),
-                                                            arguments: tc.function.as_ref()
-                                                                .and_then(|f| f.arguments.clone())
-                                                                .map_or(serde_json::Value::Null, serde_json::Value::from)
-                                                        }
-                                                    })
-                                                    .collect()
-                                            ),
+                                        tool_calls: match prepared_tool_call.take() { // take tool calls if they're prepared and return them
+                                            Some(tool_call) => Some(vec![tool_call]),
                                             None => None,
                                         },
 
