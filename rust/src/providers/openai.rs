@@ -2,8 +2,8 @@ use async_openai::Client;
 use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, CreateChatCompletionRequest,
-    CreateChatCompletionRequestArgs, FinishReason,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, ChatCompletionTool,
+    CreateChatCompletionRequest, CreateChatCompletionRequestArgs, FinishReason,
 };
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::{
     ContentType, ContextBuilder, Message, MessageRole, PromptResponse, PromptResponseDelta,
-    ProviderAdapter, StopReason, StreamProviderAdapter, ToolDescriptor,
+    ProviderAdapter, StopReason, StreamProviderAdapter, ToolCall, ToolDescriptor,
 };
 
 pub fn build_chat_completion_message_history(
@@ -65,6 +65,21 @@ pub fn build_chat_completion_message_history(
     return msg_vec;
 }
 
+pub fn convert_steelwool_tools_to_openai(tools: Vec<ToolDescriptor>) -> Vec<ChatCompletionTool> {
+    return tools
+        .iter()
+        .map(|td| ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: td.name.clone(),
+                description: Some(td.description.clone()),
+                parameters: Some(td.schema.clone()),
+                strict: Some(true),
+            },
+        })
+        .collect();
+}
+
 // Non-streaming adapter factory
 pub fn openai_adapter_factory(
     model_name: String,
@@ -74,7 +89,7 @@ pub fn openai_adapter_factory(
     Arc::new(move |context: ContextBuilder, max_tokens : u32| -> std::pin::Pin<Box<dyn Future<Output = Result<PromptResponse, String>> + Send>> {
 
         let model = model_name.clone();
-        let system_message = system_message.clone();
+        let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         Box::pin(async move {
@@ -84,19 +99,31 @@ pub fn openai_adapter_factory(
             
             // Format the message history into the openai lib's one
             let request_msgs = build_chat_completion_message_history(
-                &context, &system_message);
+                &context, &system_msg);
 
             // Build the request body
-            let request_body = CreateChatCompletionRequestArgs::default()
+            let mut binding = CreateChatCompletionRequestArgs::default();
+            let mut request_body = binding
                 .max_tokens(max_tokens)
                 .model(model)
-                .messages(request_msgs)
+                .messages(request_msgs);
+
+            // Add tools if provided
+            if let Some(tools_vec) = tools_clone {
+                request_body = request_body.tools(
+                    convert_steelwool_tools_to_openai(tools_vec)
+                );
+            }
+
+            // Build the rest of the request from the builder
+            let request = request_body
                 .build()
                 .unwrap();
 
+            // Get the response
             let response = openai_client
                 .chat()
-                .create(request_body)
+                .create(request)
                 .await
                 .unwrap();
 
@@ -106,12 +133,38 @@ pub fn openai_adapter_factory(
                 PromptResponse {
                     message: Message { 
                         role: MessageRole::Model, 
-                        content: String::from(choice.message.content.as_ref().unwrap()), 
+                        content: match &choice.message.content {
+                            Some(content) => content.clone(),
+                            None => "".to_string(),
+                        }, 
                         content_type: ContentType::Text 
                     },
-                    stop_reason: StopReason::Stop,
+                    stop_reason: match choice.finish_reason {
+                        Some(reason) => match reason {
+                            async_openai::types::FinishReason::Stop => StopReason::Stop,
+                            async_openai::types::FinishReason::Length => StopReason::Length,
+                            async_openai::types::FinishReason::ToolCalls => StopReason::ToolCalls,
+                            async_openai::types::FinishReason::ContentFilter => StopReason::ContentFilter,
+                            async_openai::types::FinishReason::FunctionCall => StopReason::ToolCalls,
+                        },
+                        None => StopReason::Stop,
+                    },
                     token_usage: response.usage.unwrap().total_tokens,
-                    tool_calls: None,
+                    tool_calls: match choice.message.tool_calls.as_ref() {
+                        Some(tool_calls) => Some(
+                            tool_calls
+                                .iter()                                                    
+                                .map(|tc| {
+                                    ToolCall {
+                                        id: tc.id.clone(),
+                                        name: tc.function.name.clone(),
+                                        arguments: serde_json::Value::from(tc.function.arguments.clone())
+                                    }
+                                })
+                                .collect()
+                        ),
+                        None => None,
+                    },
                 }
             )
         })
@@ -130,23 +183,29 @@ pub fn openai_streaming_adapter_factory(
         let tools_clone = tools.clone();
 
         // Format the message history into the openai lib's one
-        let request_msgs = build_chat_completion_message_history(&context, &system_message);
+        let request_msgs = build_chat_completion_message_history(&context, &system_msg);
 
         // Build the request body
-        let request_body = CreateChatCompletionRequestArgs::default()
+        let mut binding = CreateChatCompletionRequestArgs::default();
+        let mut request_body = binding
             .max_tokens(max_tokens)
             .model(model)
             .messages(request_msgs)
             .stream_options(ChatCompletionStreamOptions {
                 include_usage: true,
-            })
-            .build()
-            .unwrap();
+            });
+
+        // Add tools if provided
+        if let Some(tools_vec) = tools_clone {
+            request_body = request_body.tools(convert_steelwool_tools_to_openai(tools_vec));
+        }
+
+        let request = request_body.build().unwrap();
 
         let stream = async move {
             let openai_client = Client::new();
 
-            let req_stream = openai_client.chat().create_stream(request_body).await;
+            let req_stream = openai_client.chat().create_stream(request).await;
 
             match req_stream {
                 Ok(mut response_stream) => {
@@ -160,7 +219,7 @@ pub fn openai_streaming_adapter_factory(
                                             Some(Ok(PromptResponseDelta {
                                                 content: "".to_string(),
                                                 stop_reason: Some(StopReason::Stop),
-                                                tool_call: None,
+                                                tool_calls: None,
                                                 cumulative_tokens: usage.completion_tokens,
                                             }))
                                         });
@@ -181,8 +240,23 @@ pub fn openai_streaming_adapter_factory(
                                             None => None,
                                         },
 
-                                        // todo
-                                        tool_call: None,
+                                        tool_calls: match first_choice.delta.tool_calls.as_ref() {
+                                            Some(tool_calls) => Some(
+                                                tool_calls
+                                                    .iter()                                                    
+                                                    .map(|tc| {
+                                                        ToolCall {
+                                                            id: tc.id.clone().unwrap_or_default(),
+                                                            name: tc.function.as_ref().and_then(|f| f.name.clone()).unwrap_or_default(),
+                                                            arguments: tc.function.as_ref()
+                                                                .and_then(|f| f.arguments.clone())
+                                                                .map_or(serde_json::Value::Null, serde_json::Value::from)
+                                                        }
+                                                    })
+                                                    .collect()
+                                            ),
+                                            None => None,
+                                        },
 
                                         // async-openai only ships tokens on the final delta with an empty response (fml)
                                         cumulative_tokens: 0,
