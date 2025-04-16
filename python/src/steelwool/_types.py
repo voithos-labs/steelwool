@@ -53,6 +53,7 @@ class PromptResponseDelta(BaseModel):
     content: str
     stop_reason: Optional[StopReason]
     tool_call: Optional["ToolCall"]
+    cumulative_tokens: int
 
 
 # -------------------- Tools --------------------

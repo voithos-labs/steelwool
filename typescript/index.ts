@@ -87,6 +87,7 @@ export interface PromptResponseDelta {
   content: string;
   stopReason?: StopReason;
   toolCall?: ToolCall;
+  cumulative_tokens: number
 }
 
 /**
