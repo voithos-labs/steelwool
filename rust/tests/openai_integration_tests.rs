@@ -208,7 +208,7 @@ mod tests {
         println!("\nTesting streaming tool calling integration:");
 
         let model_name = "gpt-3.5-turbo".to_string();
-        let system_message = 
+        let system_message =
             "You are a helpful assistant. When asked about the weather, use the get_weather function.".to_string();
 
         // Define a mock weather tool

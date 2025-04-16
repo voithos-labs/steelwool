@@ -96,7 +96,7 @@ pub fn openai_adapter_factory(
 
             // Build the openai client
             let openai_client = Client::new();
-            
+
             // Format the message history into the openai lib's one
             let request_msgs = build_chat_completion_message_history(
                 &context, &system_msg);
@@ -131,13 +131,13 @@ pub fn openai_adapter_factory(
 
             return Ok(
                 PromptResponse {
-                    message: Message { 
-                        role: MessageRole::Model, 
+                    message: Message {
+                        role: MessageRole::Model,
                         content: match &choice.message.content {
                             Some(content) => content.clone(),
                             None => "".to_string(),
-                        }, 
-                        content_type: ContentType::Text 
+                        },
+                        content_type: ContentType::Text
                     },
                     stop_reason: match choice.finish_reason {
                         Some(reason) => match reason {
@@ -153,7 +153,7 @@ pub fn openai_adapter_factory(
                     tool_calls: match choice.message.tool_calls.as_ref() {
                         Some(tool_calls) => Some(
                             tool_calls
-                                .iter()                                                    
+                                .iter()
                                 .map(|tc| {
                                     ToolCall {
                                         id: tc.id.clone(),
@@ -244,8 +244,8 @@ pub fn openai_streaming_adapter_factory(
                                                 if function.name.is_some() {
 
                                                     // Move the buffers to "prepared"
-                                                    prepared_tool_call = Some(ToolCall { 
-                                                        arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone() 
+                                                    prepared_tool_call = Some(ToolCall {
+                                                        arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone()
                                                     });
 
                                                     // Reset the buffers
@@ -258,9 +258,9 @@ pub fn openai_streaming_adapter_factory(
                                             // and start a running 
                                             if tool_call_buffer.is_none() {
                                                 tool_call_buffer = Some(
-                                                    ToolCall { 
-                                                        id: chunk.id.clone().unwrap(), 
-                                                        name: function.name.as_ref().unwrap().to_string(), 
+                                                    ToolCall {
+                                                        id: chunk.id.clone().unwrap(),
+                                                        name: function.name.as_ref().unwrap().to_string(),
                                                         arguments: serde_json::Value::Null
                                                     });
                                                 continue;
@@ -276,10 +276,10 @@ pub fn openai_streaming_adapter_factory(
                                     if let Some(FinishReason::ToolCalls) = first_choice.finish_reason {
                                         if let Some(tool_call) = &tool_call_buffer {
                                             // Move the buffers to "prepared"
-                                            prepared_tool_call = Some(ToolCall { 
-                                                arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone() 
+                                            prepared_tool_call = Some(ToolCall {
+                                                arguments: serde_json::Value::from(arguments_buffer.to_string()), ..tool_call.clone()
                                             });
-    
+
                                             // Reset the buffers
                                             tool_call_buffer = None;
                                             arguments_buffer = "".to_string();
@@ -307,7 +307,6 @@ pub fn openai_streaming_adapter_factory(
                                         // async-openai only ships tokens on the final delta with an empty response (fml)
                                         cumulative_tokens: 0,
                                     }));
-                                    
                                 },
                                 Some(Err(e)) => {
                                     Some(Err(format!("OpenAI streaming error: {:?}", e)))
