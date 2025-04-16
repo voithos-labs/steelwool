@@ -61,11 +61,18 @@ mod tests {
 
         // Collect and display streamed content for debug
         let mut streamed_content = String::new();
+        let mut saw_tokens = false;  // Track if we ever see tokens
+
         while let Some(result) = stream.next().await {
             match result {
                 Ok(delta) => {
                     print!("{}", delta.content);
                     streamed_content.push_str(&delta.content);
+
+                    if delta.cumulative_tokens > 0 {
+                        saw_tokens = true;
+                        println!("\n[Tokens used so far: {}]", delta.cumulative_tokens);
+                    }
 
                     if delta.stop_reason.is_some() {
                         println!("\n[Stream completed]");
@@ -78,19 +85,19 @@ mod tests {
             }
         }
 
-        // Verify we got something
-        assert!(
-            !streamed_content.is_empty(),
-            "Stream should produce content"
-        );
+        // Verify we got something and saw tokens
+        assert!(!streamed_content.is_empty(), "Stream should produce content");
+        assert!(saw_tokens, "Stream should report token usage at least once");
 
         // Test 2: Streaming with callback
         println!("\nTesting streaming with callback:");
         let callback_counter = Arc::new(Mutex::new(0));
         let callback_content = Arc::new(Mutex::new(String::new()));
+        let saw_tokens = Arc::new(Mutex::new(false));  // Track tokens in callback
 
         let counter_clone = callback_counter.clone();
         let content_clone = callback_content.clone();
+        let tokens_clone = saw_tokens.clone();
 
         let _result = context
             .clone()
@@ -104,6 +111,12 @@ mod tests {
                     let mut content = content_clone.lock().unwrap();
                     content.push_str(&delta.content);
 
+                    if delta.cumulative_tokens > 0 {
+                        let mut tokens = tokens_clone.lock().unwrap();
+                        *tokens = true;
+                        println!("\n[Tokens used so far: {}]", delta.cumulative_tokens);
+                    }
+
                     if delta.stop_reason.is_some() {
                         println!("\n[Callback stream completed]");
                     }
@@ -111,9 +124,10 @@ mod tests {
             })
             .await;
 
-        // Verify callback was called multiple times
+        // Verify callback was called multiple times and reported tokens
         let final_count = *callback_counter.lock().unwrap();
         let final_content = callback_content.lock().unwrap().clone();
+        let final_saw_tokens = *saw_tokens.lock().unwrap();
 
         assert!(
             final_count > 1,
@@ -121,6 +135,7 @@ mod tests {
             final_count
         );
         assert!(!final_content.is_empty(), "Callback should collect content");
+        assert!(final_saw_tokens, "Callback should report token usage at least once");
         println!("Callback was called {} times", final_count);
     }
 }

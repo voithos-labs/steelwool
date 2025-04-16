@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use async_openai::types::{
-    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest, CreateChatCompletionRequestArgs
+    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, CreateChatCompletionRequest, CreateChatCompletionRequestArgs, FinishReason
 };
 use async_openai::Client;
 use futures::stream::{self, BoxStream};
@@ -11,12 +11,10 @@ use crate::{
     ProviderAdapter, StopReason, StreamProviderAdapter, ToolDescriptor,
 };
 
-pub fn build_chat_completion_request(
+pub fn build_chat_completion_message_history(
     context: &ContextBuilder,
     system_message: &str,
-    max_tokens : u32,
-    model : &String
-) -> CreateChatCompletionRequest {
+) -> Vec<ChatCompletionRequestMessage> {
 
     let mut msg_vec : Vec<ChatCompletionRequestMessage> = vec![];
 
@@ -74,13 +72,7 @@ pub fn build_chat_completion_request(
 
     }
 
-    // Finally, return the request 
-    return CreateChatCompletionRequestArgs::default()
-        .max_tokens(max_tokens)
-        .model(model)
-        .messages(msg_vec)
-        .build()
-        .unwrap();
+    return msg_vec;
 }
 
 // Non-streaming adapter factory
@@ -101,9 +93,16 @@ pub fn openai_adapter_factory(
             let openai_client = Client::new();
             
             // Format the message history into the openai lib's one
-            let request_body = build_chat_completion_request(
-                &context, &system_message, max_tokens, &model);
+            let request_msgs = build_chat_completion_message_history(
+                &context, &system_message);
 
+            // Build the request body
+            let request_body = CreateChatCompletionRequestArgs::default()
+                .max_tokens(max_tokens)
+                .model(model)
+                .messages(request_msgs)
+                .build()
+                .unwrap();
 
             let response = openai_client
                 .chat()
@@ -141,12 +140,22 @@ pub fn openai_streaming_adapter_factory(
         let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
-        let request_body = build_chat_completion_request(
-            &context, 
-            &system_msg, 
-            max_tokens, 
-            &model
-        );
+        // Format the message history into the openai lib's one
+        let request_msgs = build_chat_completion_message_history(
+            &context, &system_message);
+
+        // Build the request body
+        let request_body = CreateChatCompletionRequestArgs::default()
+            .max_tokens(max_tokens)
+            .model(model)
+            .messages(request_msgs)
+            .stream_options(
+                ChatCompletionStreamOptions {
+                    include_usage: true
+                }
+            )
+            .build()
+            .unwrap();
 
         let stream = async move {
 
@@ -165,7 +174,14 @@ pub fn openai_streaming_adapter_factory(
                                 Some(Ok(response)) => {
 
                                     if response.choices.is_empty() {
-                                        return None;
+                                        return response.usage.map_or(None, |usage| {
+                                            Some(Ok(PromptResponseDelta {
+                                                content: "".to_string(),
+                                                stop_reason: Some(StopReason::Stop),
+                                                tool_call: None,
+                                                cumulative_tokens: usage.completion_tokens,
+                                            }))
+                                        });
                                     }
 
                                     let first_choice = &response.choices[0];
@@ -182,7 +198,12 @@ pub fn openai_streaming_adapter_factory(
                                             },
                                             None => None,
                                         },
+
+                                        // todo
                                         tool_call: None,
+
+                                        // async-openai only ships tokens on the final delta with an empty response (fml)
+                                        cumulative_tokens: 0,
                                     }));
                                     
                                 },
