@@ -13,15 +13,9 @@ use crate::{
 /// - should be default, allowing users to pass in their own formatter -> String
 pub fn format_ollama_prompt(
     context: &ContextBuilder,
-    system_message: &str,
     tools: &Option<Vec<ToolDescriptor>>,
 ) -> String {
     let mut prompt = String::new();
-
-    // Add system message if provided
-    if !system_message.is_empty() {
-        prompt.push_str(&format!("system\n{}\n\n", system_message));
-    }
 
     // Include tool definitions if available
     if let Some(tools) = tools {
@@ -141,6 +135,7 @@ pub fn ollama_streaming_adapter_factory(
                                             None
                                         },
                                         tool_call: None, // Ollama doesn't support tool calls in streaming mode yet
+                                        cumulative_tokens: 0,
                                     };
 
                                     Some(Ok(delta))
