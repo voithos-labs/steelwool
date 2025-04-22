@@ -1,5 +1,5 @@
 {
-  "name": "meta-package",
+  "name": "steelwool",
   "private": true,
   "workspaces": ["typescript"]
 }
