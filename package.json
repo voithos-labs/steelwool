@@ -1,0 +1,5 @@
+{
+  "name": "meta-package",
+  "private": true,
+  "workspaces": ["typescript"]
+}
