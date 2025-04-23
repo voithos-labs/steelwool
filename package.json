@@ -1,0 +1,5 @@
+{
+  "name": "steelwool",
+  "private": true,
+  "workspaces": ["typescript"]
+}
