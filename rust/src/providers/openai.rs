@@ -52,11 +52,11 @@ pub fn build_chat_completion_message_history(
         });
     }
 
-    return msg_vec;
+    msg_vec
 }
 
 pub fn convert_steelwool_tools_to_openai(tools: Vec<ToolDescriptor>) -> Vec<ChatCompletionTool> {
-    return tools
+    tools
         .iter()
         .map(|td| ChatCompletionTool {
             r#type: async_openai::types::ChatCompletionToolType::Function,
@@ -67,7 +67,7 @@ pub fn convert_steelwool_tools_to_openai(tools: Vec<ToolDescriptor>) -> Vec<Chat
                 strict: Some(true),
             },
         })
-        .collect();
+        .collect()
 }
 
 // Non-streaming adapter factory
@@ -116,7 +116,7 @@ pub fn openai_adapter_factory(
 
             let choice = &response.choices[0];
 
-            return Ok(
+            Ok(
                 PromptResponse {
                     message: Message {
                         role: MessageRole::Model,
@@ -137,9 +137,7 @@ pub fn openai_adapter_factory(
                         None => StopReason::Stop,
                     },
                     token_usage: response.usage.unwrap().total_tokens,
-                    tool_calls: match choice.message.tool_calls.as_ref() {
-                        Some(tool_calls) => Some(
-                            tool_calls
+                    tool_calls: choice.message.tool_calls.as_ref().map(|tool_calls| tool_calls
                                 .iter()
                                 .map(|tc| {
                                     ToolCall {
@@ -148,10 +146,7 @@ pub fn openai_adapter_factory(
                                         arguments: serde_json::Value::from(tc.function.arguments.clone())
                                     }
                                 })
-                                .collect()
-                        ),
-                        None => None,
-                    },
+                                .collect()),
                 }
             )
         })
@@ -204,14 +199,12 @@ pub fn openai_streaming_adapter_factory(
                                 Some(Ok(response)) => {
 
                                     if response.choices.is_empty() {
-                                        return response.usage.map_or(None, |usage| {
-                                            Some(Ok(PromptResponseDelta {
+                                        return response.usage.map(|usage| Ok(PromptResponseDelta {
                                                 content: "".to_string(),
                                                 stop_reason: Some(StopReason::Stop),
                                                 tool_calls: None,
                                                 cumulative_tokens: usage.completion_tokens,
-                                            }))
-                                        });
+                                            }));
                                     }
 
                                     let first_choice = &response.choices[0];
@@ -271,7 +264,7 @@ pub fn openai_streaming_adapter_factory(
                                         }
                                     }
 
-                                    return Some(Ok(PromptResponseDelta {
+                                    Some(Ok(PromptResponseDelta {
                                         content: first_choice.delta.content.clone().unwrap_or_default(),
                                         stop_reason: match first_choice.finish_reason {
                                             Some(reason) => match reason {
@@ -284,14 +277,11 @@ pub fn openai_streaming_adapter_factory(
                                             None => None,
                                         },
 
-                                        tool_calls: match prepared_tool_call.take() { // take tool calls if they're prepared and return them
-                                            Some(tool_call) => Some(vec![tool_call]),
-                                            None => None,
-                                        },
+                                        tool_calls: prepared_tool_call.take().map(|tool_call| vec![tool_call]),
 
                                         // async-openai only ships tokens on the final delta with an empty response (fml)
                                         cumulative_tokens: 0,
-                                    }));
+                                    }))
                                 },
                                 Some(Err(e)) => {
                                     Some(Err(format!("OpenAI streaming error: {:?}", e)))
@@ -309,7 +299,7 @@ pub fn openai_streaming_adapter_factory(
             }
         };
 
-        return Box::pin(stream::once(stream).flatten())
-            as BoxStream<'static, Result<PromptResponseDelta, String>>;
+        Box::pin(stream::once(stream).flatten())
+            as BoxStream<'static, Result<PromptResponseDelta, String>>
     })
 }
