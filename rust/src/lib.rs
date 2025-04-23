@@ -342,15 +342,6 @@ impl UnresolvedResponse {
         unresolved_response.context_builder
     }
 
-    pub async fn resolve_with_retry(
-        self,
-        tool_executer: ToolExecuter,
-        retry_depth: Option<usize>,
-    ) -> ContextBuilder {
-        // todo
-        self.context_builder
-    }
-
     pub fn resolve_without(self) -> ContextBuilder {
         self.context_builder
             .add_message(self.prompt_response.message)
