@@ -50,8 +50,7 @@ mod tests {
         let model_name = "gpt-3.5-turbo".to_string();
         let system_message =
             "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-        let streaming_adapter =
-            openai_streaming_adapter_factory(model_name.clone(), None);
+        let streaming_adapter = openai_streaming_adapter_factory(model_name.clone(), None);
 
         let context = ContextBuilder { history: vec![] }
             .add_message(Message {
@@ -248,8 +247,7 @@ mod tests {
         };
 
         let tools = Some(vec![weather_tool]);
-        let streaming_adapter =
-            openai_streaming_adapter_factory(model_name.clone(), tools);
+        let streaming_adapter = openai_streaming_adapter_factory(model_name.clone(), tools);
 
         let context = ContextBuilder { history: vec![] }
             .add_message(Message {
