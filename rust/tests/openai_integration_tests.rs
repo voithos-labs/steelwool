@@ -15,13 +15,19 @@ mod tests {
         let model_name = "gpt-3.5-turbo".to_string();
         let system_message =
             "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-        let adapter = openai_adapter_factory(model_name, system_message, None);
+        let adapter = openai_adapter_factory(model_name, None);
 
-        let context = ContextBuilder { history: vec![] }.add_message(Message {
-            role: MessageRole::User,
-            content: "Explain quantum computing in 3 simple sentences.".to_string(),
-            content_type: ContentType::Text,
-        });
+        let context = ContextBuilder { history: vec![] }
+            .add_message(Message {
+                role: MessageRole::System,
+                content: system_message,
+                content_type: ContentType::Text,
+            })
+            .add_message(Message {
+                role: MessageRole::User,
+                content: "Explain quantum computing in 3 simple sentences.".to_string(),
+                content_type: ContentType::Text,
+            });
 
         let response = context.send(adapter, 1000).await.resolve_without();
 
@@ -44,14 +50,19 @@ mod tests {
         let model_name = "gpt-3.5-turbo".to_string();
         let system_message =
             "You are a helpful, concise assistant. Keep your answers brief.".to_string();
-        let streaming_adapter =
-            openai_streaming_adapter_factory(model_name.clone(), system_message.clone(), None);
+        let streaming_adapter = openai_streaming_adapter_factory(model_name.clone(), None);
 
-        let context = ContextBuilder { history: vec![] }.add_message(Message {
-            role: MessageRole::User,
-            content: "Explain quantum computing in 3 simple sentences.".to_string(),
-            content_type: ContentType::Text,
-        });
+        let context = ContextBuilder { history: vec![] }
+            .add_message(Message {
+                role: MessageRole::System,
+                content: system_message,
+                content_type: ContentType::Text,
+            })
+            .add_message(Message {
+                role: MessageRole::User,
+                content: "Explain quantum computing in 3 simple sentences.".to_string(),
+                content_type: ContentType::Text,
+            });
 
         // Test 1: Basic streaming with DIRECT stream consumption
         println!("Testing direct stream consumption:");
@@ -170,13 +181,19 @@ mod tests {
         };
 
         let tools = Some(vec![weather_tool]);
-        let adapter = openai_adapter_factory(model_name, system_message, tools);
+        let adapter = openai_adapter_factory(model_name, tools);
 
-        let context = ContextBuilder { history: vec![] }.add_message(Message {
-            role: MessageRole::User,
-            content: "What's the weather like in Seattle?".to_string(),
-            content_type: ContentType::Text,
-        });
+        let context = ContextBuilder { history: vec![] }
+            .add_message(Message {
+                role: MessageRole::System,
+                content: system_message,
+                content_type: ContentType::Text,
+            })
+            .add_message(Message {
+                role: MessageRole::User,
+                content: "What's the weather like in Seattle?".to_string(),
+                content_type: ContentType::Text,
+            });
 
         let response = context.send(adapter, 1000).await;
 
@@ -230,14 +247,19 @@ mod tests {
         };
 
         let tools = Some(vec![weather_tool]);
-        let streaming_adapter =
-            openai_streaming_adapter_factory(model_name.clone(), system_message.clone(), tools);
+        let streaming_adapter = openai_streaming_adapter_factory(model_name.clone(), tools);
 
-        let context = ContextBuilder { history: vec![] }.add_message(Message {
-            role: MessageRole::User,
-            content: "What's the weather like in Seattle?".to_string(),
-            content_type: ContentType::Text,
-        });
+        let context = ContextBuilder { history: vec![] }
+            .add_message(Message {
+                role: MessageRole::System,
+                content: system_message,
+                content_type: ContentType::Text,
+            })
+            .add_message(Message {
+                role: MessageRole::User,
+                content: "What's the weather like in Seattle?".to_string(),
+                content_type: ContentType::Text,
+            });
 
         // Test 1: Basic streaming with DIRECT stream consumption
         println!("Testing direct stream consumption:");
