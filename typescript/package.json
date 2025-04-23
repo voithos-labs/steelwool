@@ -19,12 +19,19 @@
   },
   "license": "MIT",
   "author": "Voithos Labs Inc.",
-  "type": "commonjs",
-  "main": "index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
   }
 }
