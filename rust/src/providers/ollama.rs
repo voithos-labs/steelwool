@@ -1,6 +1,7 @@
 use futures::stream::{self, BoxStream, StreamExt};
 use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
+use serde_json::json;
 use std::sync::Arc;
 
 use crate::{
@@ -8,61 +9,57 @@ use crate::{
     ProviderAdapter, StopReason, StreamProviderAdapter, ToolDescriptor,
 };
 
-/// Format a prompt for Ollama in the OpenAI-compatible format
-/// TODO:
-/// - should be default, allowing users to pass in their own formatter -> String
+/// Format a prompt for Ollama using standard JSON format
 pub fn format_ollama_prompt(
     context: &ContextBuilder,
     tools: &Option<Vec<ToolDescriptor>>,
 ) -> String {
-    let mut prompt = String::new();
+    // Create a JSON object with the messages from context history
+    let messages = context
+        .history
+        .iter()
+        .map(|msg| {
+            let role = match msg.role {
+                MessageRole::User => "user",
+                MessageRole::Model => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Function | MessageRole::Tool => "tool",
+            };
 
-    // Include tool definitions if available
-    if let Some(tools) = tools {
-        prompt.push_str("Available tools:\n");
-        for tool in tools {
-            let schema_str =
-                serde_json::to_string_pretty(&tool.schema).unwrap_or_else(|_| "{}".to_string());
-            prompt.push_str(&format!(
-                "Tool name: {}\nDescription: {}\nParameters: {}\nRequired: {}\n\n",
-                tool.name, tool.description, schema_str, tool.required
-            ));
-        }
+            json!({
+                "role": role,
+                "content": msg.content
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Add tools if available
+    let mut request = json!({
+        "messages": messages
+    });
+
+    if let Some(tools_list) = tools {
+        request["tools"] = json!(tools_list);
     }
 
-    // Add conversation history
-    for msg in &context.history {
-        let role = match msg.role {
-            MessageRole::User => "user",
-            MessageRole::Model => "assistant",
-            MessageRole::System => "system",
-            MessageRole::Function | MessageRole::Tool => "function",
-        };
-        prompt.push_str(&format!("{role}\n{}\n\n", msg.content));
-    }
-
-    // Add final role marker for assistant's response
-    prompt.push_str("assistant\n");
-
-    prompt
+    // Return the JSON as a string
+    serde_json::to_string(&request).unwrap_or_default()
 }
 
 // Non-streaming adapter factory
 pub fn ollama_adapter_factory(
     model_name: String,
-    system_message: String,
     tools: Option<Vec<ToolDescriptor>>,
 ) -> ProviderAdapter {
     Arc::new(move |context: ContextBuilder, _: u32| {
         let model = model_name.clone();
-        let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         Box::pin(async move {
             let ollama = Ollama::default();
 
             // Use the generalized formatting function
-            let prompt = format_ollama_prompt(&context, &system_msg, &tools_clone);
+            let prompt = format_ollama_prompt(&context, &tools_clone);
 
             let request = GenerationRequest::new(model, prompt);
             let result = ollama.generate(request).await;
@@ -87,16 +84,14 @@ pub fn ollama_adapter_factory(
 // Streaming adapter factory
 pub fn ollama_streaming_adapter_factory(
     model_name: String,
-    system_message: String,
     tools: Option<Vec<ToolDescriptor>>,
 ) -> StreamProviderAdapter {
     Arc::new(move |context: ContextBuilder, _: u32| {
         let model = model_name.clone();
-        let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         // Use the generalized formatting function
-        let prompt = format_ollama_prompt(&context, &system_msg, &tools_clone);
+        let prompt = format_ollama_prompt(&context, &tools_clone);
 
         // Create a boxed stream that will contain our PromptResponseDelta items
         let stream = async move {
