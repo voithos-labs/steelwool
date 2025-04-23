@@ -3,7 +3,7 @@ use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
     ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions, ChatCompletionTool,
-    CreateChatCompletionRequest, CreateChatCompletionRequestArgs, FinishReason,
+    CreateChatCompletionRequestArgs, FinishReason,
 };
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
@@ -16,18 +16,8 @@ use crate::{
 
 pub fn build_chat_completion_message_history(
     context: &ContextBuilder,
-    system_message: &str,
 ) -> Vec<ChatCompletionRequestMessage> {
     let mut msg_vec: Vec<ChatCompletionRequestMessage> = vec![];
-
-    // Push the system message into the msg_vec
-    msg_vec.push(
-        ChatCompletionRequestSystemMessageArgs::default()
-            .content(system_message)
-            .build()
-            .unwrap()
-            .into(),
-    );
 
     for msg in &context.history {
         msg_vec.push(match msg.role {
@@ -83,13 +73,11 @@ pub fn convert_steelwool_tools_to_openai(tools: Vec<ToolDescriptor>) -> Vec<Chat
 // Non-streaming adapter factory
 pub fn openai_adapter_factory(
     model_name: String,
-    system_message: String,
     tools: Option<Vec<ToolDescriptor>>,
 ) -> ProviderAdapter {
     Arc::new(move |context: ContextBuilder, max_tokens : u32| -> std::pin::Pin<Box<dyn Future<Output = Result<PromptResponse, String>> + Send>> {
 
         let model = model_name.clone();
-        let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         Box::pin(async move {
@@ -98,8 +86,7 @@ pub fn openai_adapter_factory(
             let openai_client = Client::new();
 
             // Format the message history into the openai lib's one
-            let request_msgs = build_chat_completion_message_history(
-                &context, &system_msg);
+            let request_msgs = build_chat_completion_message_history(&context);
 
             // Build the request body
             let mut binding = CreateChatCompletionRequestArgs::default();
@@ -174,16 +161,14 @@ pub fn openai_adapter_factory(
 // Streaming adapter factory
 pub fn openai_streaming_adapter_factory(
     model_name: String,
-    system_message: String,
     tools: Option<Vec<ToolDescriptor>>,
 ) -> StreamProviderAdapter {
     Arc::new(move |context: ContextBuilder, max_tokens: u32| {
         let model = model_name.clone();
-        let system_msg = system_message.clone();
         let tools_clone = tools.clone();
 
         // Format the message history into the openai lib's one
-        let request_msgs = build_chat_completion_message_history(&context, &system_msg);
+        let request_msgs = build_chat_completion_message_history(&context);
 
         // Build the request body
         let mut binding = CreateChatCompletionRequestArgs::default();
