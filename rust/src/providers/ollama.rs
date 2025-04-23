@@ -129,7 +129,7 @@ pub fn ollama_streaming_adapter_factory(
                                         } else {
                                             None
                                         },
-                                        tool_call: None, // Ollama doesn't support tool calls in streaming mode yet
+                                        tool_calls: None, // *it does support this; todo
                                         cumulative_tokens: 0,
                                     };
 
