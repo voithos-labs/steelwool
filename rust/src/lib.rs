@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 pub mod providers {
     #[cfg(feature = "ollama")]
     pub mod ollama;
+    #[cfg(feature = "openai")]
+    pub mod openai;
 }
 
 /* ------------------------------- Signatures ------------------------------- */
@@ -106,7 +108,7 @@ pub struct PromptResponse {
 pub struct PromptResponseDelta {
     pub content: String,
     pub stop_reason: Option<StopReason>,
-    pub tool_call: Option<ToolCall>,
+    pub tool_calls: Option<Vec<ToolCall>>,
     pub cumulative_tokens: u32,
 }
 
@@ -253,10 +255,10 @@ impl ContextBuilder {
                 content.push_str(&delta.content);
 
                 // Update tool call if provided
-                if let Some(tool_call) = delta.tool_call {
+                if let Some(tool_call) = delta.tool_calls {
                     match &mut tool_calls {
-                        Some(calls) => calls.push(tool_call),
-                        None => tool_calls = Some(vec![tool_call]),
+                        Some(calls) => calls.extend(tool_call),
+                        None => tool_calls = Some(tool_call),
                     }
                 }
 
